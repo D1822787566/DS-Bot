@@ -36,7 +36,7 @@ test('redacts credentials and runtime internals from the client view', () => {
   const view = phoneAgentView(state, { state: 'ready', pid: 12 })
   assert.equal(view.config.bridgeCredential, undefined)
   assert.equal(view.config.livekitSecret, undefined)
-  assert.equal(view.config.runtimeRoot, undefined)
+  assert.equal(view.config.runtimeRoot, 'E:/private')
   assert.deepEqual(view.bots, [{ id: 'a', name: 'Alpha', wakeName: 'alpha', ttsVoice: 'voice-a' }])
 })
 

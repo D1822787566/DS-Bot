@@ -161,7 +161,7 @@ export function PhoneAgentSettings({ actions }) {
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save ASR/TTS'))),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Advanced continuation')),
       h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.continuationEnabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t('Enable semantic continuation')),
-      configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'),
+      configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'), configField('runtimeRoot', 'Phone Agent runtime folder'), configField('configPath', 'Phone Agent runtime config'),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save advanced settings'))),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Bots, wake words and voices')),
       (value?.bots ?? []).map(bot => {

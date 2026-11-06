@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/
 const validName = value => typeof value === 'string' && value.length >= 1 && value.length <= 120
   && !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n')
-const SECRET_KEYS = new Set(['bridgeCredential', 'livekitSecret', 'livekitKey', 'ttsWorkerCredential', 'continuationApiKey', 'runtimeRoot', 'pythonPath', 'configPath'])
+const SECRET_KEYS = new Set(['bridgeCredential', 'livekitSecret', 'livekitKey', 'ttsWorkerCredential', 'continuationApiKey'])
 
 const text = (value, max = 240) => typeof value === 'string' ? value.trim().slice(0, max) : ''
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback
