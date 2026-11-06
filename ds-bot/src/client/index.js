@@ -24,6 +24,7 @@ import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
 import { Overlays } from './overlays.js'
+import { BotPresets, openPluginManager, PLUGIN_CSS } from './plugin-page.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
@@ -666,6 +667,8 @@ export function apply(ctx) {
   // DSH's own settings: models, providers, keys and its plugins.
   actions.openHarnessSettings = openHarnessSettings
   actions.openHarnessOnboarding = openHarnessOnboarding
+  actions.openPlugins = () => openPluginManager({ actions, ui, navigation: ctx.get('pluginNavigation') })
+    .catch(error => actions.reportError(error, 'plugins'))
   // DSH's Models page, through DS Bot's own onboarding step while it is registered.
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.('settings.onboarding') ?? []).some(entry => entry.options?.id === MODELS_STEP)
@@ -673,9 +676,8 @@ export function apply(ctx) {
     else openHarnessSettings()
   }
   // With the plugin manager mounted, setup is its bundle page (the model's size
-  // and download notes live there). Where it is not mounted — the desktop app's
-  // profile has no plugin manager — the speech Remote prepares the provider
-  // itself, and the voice pane follows its progress.
+  // and download notes live there). Other compositions can prepare through the
+  // speech Remote instead, and the voice pane follows its progress.
   actions.voiceSetup = (providerId) => {
     const navigation = ctx.get('pluginNavigation')
     if (navigation !== undefined) return { navigate: () => navigation.openBundle(VOICE_BUNDLE) }
@@ -919,8 +921,21 @@ export function apply(ctx) {
   // The shell group paints the team surface around the session; the conversation
   // group re-skins the session itself. Each step returns a disposer from slots.inject,
   // so a surface change withdraws the whole group and the outlets re-render.
+  const installBotPresets = () => {
+    let dispose = null
+    const sync = () => {
+      if (roster.getSnapshot().pluginsEnabled && !dispose) {
+        dispose = shadow('plugins.tab', { id: 'ds-bot-presets', order: 100, label: () => t('Bot presets'), inject: () => ({ actions }) }, BotPresets)
+      } else if (!roster.getSnapshot().pluginsEnabled && dispose) {
+        dispose(); dispose = null
+      }
+    }
+    const off = roster.subscribe(sync)
+    sync()
+    return () => { off(); dispose?.() }
+  }
   const installShell = () => [
-    () => installCompiledStyles(SHELL_CSS, 'shell'),
+    () => installCompiledStyles(SHELL_CSS + PLUGIN_CSS, 'shell'),
     () => installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
     () => installCompiledStyles(SECRET_CSS, 'secrets'),
     () => installCompiledStyles(LEARNING_CSS, 'learning'),
@@ -940,6 +955,7 @@ export function apply(ctx) {
     () => installFrameWatch(frame),
     () => installFrameSync(),
     () => installTheme(),
+    () => installBotPresets(),
     () => shadow('sidebar.workspaces', { priority: BOT_PRIORITY, inject: face }, TeamSidebar),
     () => shadow('sidebar.brand.mark', { priority: BOT_PRIORITY }, BrandMark),
     () => shadow('sidebar.brand.name', { priority: BOT_PRIORITY }, BrandName),

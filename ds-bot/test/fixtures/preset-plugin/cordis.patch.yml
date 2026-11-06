@@ -1,0 +1,12 @@
+- insert:
+    - id: ds-bot-test-learning
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: bot-test-learning
+        name: Learning test
+        description: Mock-only integration preset for DS Bot.
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a learning assistant in an isolated DS Bot integration test.
