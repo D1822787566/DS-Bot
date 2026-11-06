@@ -1,6 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultPhoneAgentConfig, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView } from '../src/host/phone-agent.js'
+import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView } from '../src/host/phone-agent.js'
+
+test('fills legacy empty Phone Agent fields from imported defaults', () => {
+  const current = { ...defaultPhoneAgentConfig(), deviceId: 'windows-dsbot-01', targetId: 'windows-dsbot-01', runtimeRoot: '', configPath: '', asrModelDir: '' }
+  const imported = { ...defaultPhoneAgentConfig(), deviceId: 'windows-office-01', targetId: 'windows-office-01', runtimeRoot: 'E:/project_space/phone_agent', configPath: 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json', asrModelDir: 'D:/models/asr' }
+  const value = mergePhoneAgentDefaults(current, imported)
+  assert.equal(value.deviceId, 'windows-office-01')
+  assert.equal(value.runtimeRoot, 'E:/project_space/phone_agent')
+  assert.equal(value.configPath, 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json')
+  assert.equal(value.asrModelDir, 'D:/models/asr')
+})
+
+test('finds the sibling Phone Agent project in this source checkout', () => {
+  assert.equal(phoneAgentProjectRoot(), 'E:\\project_space\\phone_agent')
+})
+
+test('passes local Bridge credentials to the Windows launcher without exposing them in the view', () => {
+  const env = phoneAgentEnvironmentFromRuntime({ bridge_credential: 'bridge-secret' }, { EXISTING: 'keep' })
+  assert.equal(env.EXISTING, 'keep')
+  assert.equal(env.CHANNEL_BRIDGE_VOICE_CREDENTIAL, 'bridge-secret')
+  assert.equal(env.CHANNEL_BRIDGE_TEXT_CREDENTIAL, 'bridge-secret')
+})
 
 test('imports recorded Windows runtime settings into Phone Agent defaults', () => {
   const value = phoneAgentDefaultsFromRuntime({
@@ -12,12 +33,13 @@ test('imports recorded Windows runtime settings into Phone Agent defaults', () =
     windows_audio_backend: 'media_devices',
   }, { TTS_MODEL: 'qwen-audio-3.1-tts-flash', TTS_VOICE: 'longshao_v3.1' }, {
     runtimeRoot: 'D:/phone_agent_runtime', configPath: 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json',
-  })
+  }, { input_device: 'Microphone (C01)', output_device: 'Speakers (Philips)' })
   assert.equal(value.deviceId, 'windows-office-01')
   assert.equal(value.inputDeviceName, 'C01')
   assert.equal(value.asrModelDir, 'D:/models/asr')
   assert.equal(value.ttsModel, 'qwen-audio-3.1-tts-flash')
   assert.equal(value.ttsVoice, 'longshao_v3.1')
+  assert.equal(value.outputDeviceName, 'Speakers (Philips)')
   assert.equal(value.runtimeRoot, 'D:/phone_agent_runtime')
   assert.equal(value.configPath, 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json')
 })

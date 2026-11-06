@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/
 const validName = value => typeof value === 'string' && value.length >= 1 && value.length <= 120
@@ -52,18 +53,60 @@ export function defaultPhoneAgentConfig() {
   }
 }
 
+const PHONE_AGENT_FIELDS = new Set([
+  'deviceId', 'targetId', 'inputDeviceName', 'outputDeviceName', 'audioBackend',
+  'asrModel', 'asrLanguage', 'asrModelDir', 'speakerModelDir', 'speakerProfileDir',
+  'ttsModel', 'ttsVoice', 'ttsConfigPath', 'livekitUrl', 'livekitRoom',
+  'continuationEnabled', 'continuationModel', 'continuationUrl', 'continuationTimeout',
+  'wakeTimeout', 'continuationTimeoutSeconds', 'clarificationTimeoutSeconds',
+  'bargeInEnabled', 'wakeEnabled', 'speakerVerificationEnabled', 'runtimeRoot', 'pythonPath', 'configPath',
+])
+
+export function mergePhoneAgentDefaults(current = {}, imported = {}) {
+  const base = defaultPhoneAgentConfig()
+  const value = { ...current }
+  for (const key of PHONE_AGENT_FIELDS) {
+    if (imported[key] === undefined) continue
+    if (current[key] === undefined || current[key] === '' || current[key] === base[key]) value[key] = imported[key]
+  }
+  return value
+}
+
+export function phoneAgentProjectRoot() {
+  const configured = text(process.env.PHONE_AGENT_ROOT, '')
+  if (configured && existsSync(join(configured, 'scripts', 'run-desktop.ps1'))) return resolve(configured)
+  let current = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  for (;;) {
+    const candidate = join(current, 'phone_agent')
+    if (existsSync(join(candidate, 'scripts', 'run-desktop.ps1'))) return candidate
+    const parent = dirname(current)
+    if (parent === current) return ''
+    current = parent
+  }
+}
+
+export function phoneAgentEnvironmentFromRuntime(runtime = {}, environment = {}) {
+  const next = { ...environment }
+  const credential = text(runtime.bridge_credential, 500)
+  if (credential) {
+    next.CHANNEL_BRIDGE_VOICE_CREDENTIAL ??= credential
+    next.CHANNEL_BRIDGE_TEXT_CREDENTIAL ??= credential
+  }
+  return next
+}
+
 // The Phone Agent project already records the machine's Windows runtime values
 // outside DS Bot. Import only non-secret fields so the first settings view is
 // useful instead of showing an empty form.
-export function phoneAgentDefaultsFromRuntime(runtime = {}, desktop = {}, tts = {}, paths = {}) {
+export function phoneAgentDefaultsFromRuntime(runtime = {}, desktop = {}, tts = {}, paths = {}, recorded = {}) {
   const base = defaultPhoneAgentConfig()
   const deviceId = textOr(desktop.device_id ?? runtime.device_id, base.deviceId, 96)
   return {
     ...base,
     deviceId,
     targetId: textOr(desktop.target_id ?? runtime.target_id, deviceId, 96),
-    inputDeviceName: textOr(desktop.windows_input_device_name ?? runtime.windows_input_device_name, base.inputDeviceName, 160),
-    outputDeviceName: textOr(desktop.windows_output_device_name ?? runtime.windows_output_device_name, base.outputDeviceName, 160),
+    inputDeviceName: textOr(desktop.windows_input_device_name ?? runtime.windows_input_device_name ?? recorded.input_device, base.inputDeviceName, 160),
+    outputDeviceName: textOr(desktop.windows_output_device_name ?? runtime.windows_output_device_name ?? recorded.output_device, base.outputDeviceName, 160),
     audioBackend: desktop.windows_audio_backend === 'platform_audio' || runtime.windows_audio_backend === 'platform_audio' ? 'platform_audio' : base.audioBackend,
     asrModelDir: textOr(runtime.asr_model_dir, base.asrModelDir, 500),
     speakerModelDir: textOr(runtime.speaker_model_dir, base.speakerModelDir, 500),
@@ -106,6 +149,28 @@ function envFile(path) {
   } catch { return {} }
 }
 
+function latestCaptureMetadata(root) {
+  const profileRoot = join(root, 'voice-profile')
+  let newest = { at: -1, value: {} }
+  const visit = directory => {
+    if (!existsSync(directory)) return
+    let entries
+    try { entries = readdirSync(directory, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) visit(path)
+      else if (entry.name === 'capture-metadata.json') {
+        try {
+          const at = statSync(path).mtimeMs
+          if (at > newest.at) newest = { at, value: jsonFile(path) }
+        } catch { /* ignore stale diagnostic records */ }
+      }
+    }
+  }
+  visit(profileRoot)
+  return newest.value
+}
+
 function existingRuntimeDefaults() {
   const root = text(process.env.PHONE_AGENT_RUNTIME_ROOT, '')
   const candidates = [
@@ -117,10 +182,10 @@ function existingRuntimeDefaults() {
   const configPath = candidates.find(path => existsSync(path))
   if (!configPath) return {}
   const runtime = jsonFile(configPath)
-  const runtimeRoot = resolve(dirname(configPath), '..', '..')
-  const desktop = jsonFile(join(runtimeRoot, 'desktop-voice-gateway.json'))
+  const runtimeDataRoot = resolve(dirname(configPath), '..', '..')
+  const desktop = jsonFile(join(runtimeDataRoot, 'desktop-voice-gateway.json'))
   const tts = envFile(runtime.tts_config_path)
-  return phoneAgentDefaultsFromRuntime(runtime, desktop, tts, { runtimeRoot, configPath })
+  return phoneAgentDefaultsFromRuntime(runtime, desktop, tts, { runtimeRoot: phoneAgentProjectRoot(), configPath }, latestCaptureMetadata(runtimeDataRoot))
 }
 
 export function normalizePhoneAgentConfig(raw = {}) {
@@ -217,7 +282,7 @@ class RuntimeManager {
 
   async start(config) {
     if (this.child) return this.view()
-    const root = resolve(config.runtimeRoot || process.env.PHONE_AGENT_ROOT || join(this.rt.dshHome, '..', 'phone_agent'))
+    const root = resolve(config.runtimeRoot || process.env.PHONE_AGENT_ROOT || phoneAgentProjectRoot() || join(this.rt.dshHome, '..', 'phone_agent'))
     const script = join(root, 'scripts', 'run-desktop.ps1')
     if (!existsSync(script)) throw new Error(`Phone Agent Windows launcher was not found: ${script}`)
     const shell = process.env.ComSpec || 'powershell.exe'
@@ -225,7 +290,7 @@ class RuntimeManager {
       ? ['/d', '/s', '/c', 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
       : ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
     this.state = 'starting'; this.error = ''
-    const environment = { ...process.env }
+    const environment = phoneAgentEnvironmentFromRuntime(jsonFile(config.configPath), process.env)
     if (config.configPath) environment.PHONE_AGENT_RUNTIME_CONFIG = config.configPath
     const child = spawn(shell, args, { cwd: root, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
     this.child = child
@@ -248,16 +313,34 @@ export function install(rt) {
   const { state } = rt
   const desktop = process.env.DS_BOT_APP === '1' || rt.ctx.get?.('profileContext')?.name === 'desktop'
   const imported = desktop ? existingRuntimeDefaults() : {}
-  state.prefs.phoneAgent = normalizePhoneAgentConfig({ ...imported, ...state.prefs.phoneAgent })
+  const applyImportedDefaults = () => {
+    const next = normalizePhoneAgentConfig(mergePhoneAgentDefaults(state.prefs.phoneAgent, imported))
+    if (JSON.stringify(next) === JSON.stringify(state.prefs.phoneAgent)) return false
+    state.prefs.phoneAgent = next
+    return true
+  }
+  applyImportedDefaults()
+  // Store installation reloads the persisted team after all modules are wired.
+  // Apply the import once more after that reload and persist the migration so
+  // the launcher never falls back to the data directory on the next start.
+  rt.ctx.effect(() => {
+    let stopped = false
+    void rt.load().then(() => {
+      if (stopped || !applyImportedDefaults()) return
+      return rt.save()
+    }).catch(() => {})
+    return () => { stopped = true }
+  }, 'ds-bot: Phone Agent runtime defaults')
   const manager = new RuntimeManager(rt)
-  const save = async () => { await rt.save(); return phoneAgentView(state, manager.view()) }
-  const phoneAgent = () => phoneAgentView(state, manager.view())
+  const save = async () => { applyImportedDefaults(); await rt.save(); return phoneAgentView(state, manager.view()) }
+  const phoneAgent = () => { applyImportedDefaults(); return phoneAgentView(state, manager.view()) }
   const phoneAgentUpdate = async body => {
+    applyImportedDefaults()
     if (body?.config !== undefined) state.prefs.phoneAgent = normalizePhoneAgentConfig({ ...state.prefs.phoneAgent, ...body.config })
     if (body?.botId !== undefined) updatePhoneAgentProfile(state, String(body.botId), body.profile ?? {})
     return save()
   }
-  const phoneAgentStart = async () => { state.prefs.phoneAgent.enabled = true; await rt.save(); await manager.start(state.prefs.phoneAgent); return phoneAgent() }
+  const phoneAgentStart = async () => { applyImportedDefaults(); state.prefs.phoneAgent.enabled = true; await rt.save(); await manager.start(state.prefs.phoneAgent); return phoneAgent() }
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
   Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentSubmit })

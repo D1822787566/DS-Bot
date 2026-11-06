@@ -54,9 +54,11 @@
 - [代码证据] 已在当前修复中让桌面启动握手在团队侧边栏首次挂载时立即调用 `dsBotApp.ready()`，不再等待首个 `state` 请求完成；新增回归测试覆盖空 roster 与 Agent 模式，客户端包已重新生成。
 - [代码证据] Windows 源码启动实测已在引擎启动后约 1.2 秒完成团队界面 hand-off；日志未再出现 20 秒 `ready()` 超时，团队界面可见。
 - [代码证据] Phone Agent 设置首次加载会从桌面 Phone Agent runtime 配置和 TTS `.env` 导入非敏感默认值；已保存的 DS Bot 配置优先覆盖导入值。新 Bot 未单独设置时显示 Bot 名称作为唤醒词，并继承全局 TTS 音色。
+- [代码证据] 已修复旧版空配置覆盖导入默认值的问题：启动时会把现有 runtime、TTS 和 Windows 音频记录合并回 DS Bot 配置，并将 Phone Agent 工程根目录与 runtime 配置路径持久化；Windows launcher 启动时从本地 runtime 配置注入 Bridge 凭据到子进程环境，不返回到 UI。
+- [代码证据] Windows 源码重启实测后配置已持久化为 `E:\\project_space\\phone_agent`、`D:\\phone_agent_runtime\\rebuild\\device-smoke\\runtime.json`、`C01` 和 `扬声器 (Philips SPA5308P)`；不再回退到 `.ds-bot-local\\phone_agent`。
 
 ## 继续入口
 
 - 当前入口：按 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md) 补齐 `agent-events.v1` WebSocket Bridge、DS Bot 回复分段回流、运行配置/凭据注入和 Windows 真实音频验收。
 - 需要先解决：DS Bot Bot ID 到 Phone Agent 角色/目标 ID 的映射、Windows 播放与现有 Voice Mode 的协调、凭据保存方式、完整 Bridge 事件序列、声纹录入和更换流程。
-- 验证入口：Phone Agent 与插件页定向测试、客户端构建检查和 Windows 源码启动均通过；当前设置默认值已能从现有 runtime 配置导入。下一步在运行中的 Plugins 页确认导入后的设置视觉效果，再补 Bridge 受控连接和 Windows 真实音频验收。后续开发从 `main` 继续。
+- 验证入口：Phone Agent 与插件页定向测试、客户端构建检查和 Windows 源码启动均通过；现有 runtime/TTS/音频记录已持久化导入，launcher 根目录和 Bridge 凭据注入路径已修复。下一步在运行中的 Plugins 页确认启动后的实际 runtime 状态，再补 Bridge 受控连接和 Windows 真实音频验收。后续开发从 `main` 继续。
