@@ -17,7 +17,7 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
-const { BotPresets, PresetPicker, openPluginManager } = module.exports
+const { BotPresets, PresetPicker, PhoneAgentSettings, openPluginManager } = module.exports
 
 async function mount(t, component, props) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
@@ -63,6 +63,27 @@ test('failed source setup does not open the native page or discard a Bot dialog'
   let opened = false
   await assert.rejects(openPluginManager({ actions: { plugins: async () => { throw new Error('offline') } }, ui: { set: () => assert.fail('dialog was closed') }, navigation: { openList: () => { opened = true } } }), /offline/)
   assert.equal(opened, false)
+})
+
+test('Phone Agent settings edits Bot wake names and voices through the host actions', async t => {
+  const calls = []
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: false, deviceId: 'windows-dsbot-01', inputDeviceName: '', outputDeviceName: '', ttsModel: 'qwen', ttsVoice: 'default', continuationEnabled: true, continuationModel: '' }, bots: [{ id: 'a', name: 'Alpha', wakeName: 'alpha', ttsVoice: 'voice-a' }], runtime: { state: 'stopped' } }),
+    phoneAgentUpdate: async value => { calls.push(value); return undefined },
+    phoneAgentStart: async () => ({ runtime: { state: 'ready' } }),
+    phoneAgentStop: async () => ({ runtime: { state: 'stopped' } }),
+  } })
+  assert.match(document.body.textContent, /Phone Agent/)
+  const wake = document.querySelector('[data-phone-agent-field="a:wakeName"]')
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(wake, 'new-alpha')
+  await act(async () => {
+    wake.dispatchEvent(new window.Event('input', { bubbles: true }))
+    wake.dispatchEvent(new window.Event('change', { bubbles: true }))
+  })
+  await act(async () => wake.closest('.bt-phone-bot').querySelector('button').click())
+  assert.equal(calls.at(-1).botId, 'a')
+  assert.equal(calls.at(-1).profile.wakeName, 'new-alpha')
+  assert.equal(calls.at(-1).profile.ttsVoice, 'voice-a')
 })
 
 test('the Bot extension checks presets without drawing a second market or claiming plugin ownership', async t => {

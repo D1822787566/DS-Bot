@@ -1,6 +1,6 @@
 # Phone Agent 语音插件
 
-记录状态：首版范围逐步确认，尚未开始实现
+记录状态：首版开发进行中
 最近更新：2026-11-06
 
 ## 模块目标
@@ -16,14 +16,16 @@
 - [用户确认] 插话或切换 Bot 时停止旧 Bot 的音频播放，但不默认取消 Bot 的后台工作；只有用户明确停止任务时才取消执行。
 - [用户确认] 语音转写进入对应 Bot 的现有聊天，并沿用该 Bot 的模型、上下文、权限和审批规则。
 - [用户确认] 首版优先复用 Phone Agent 已接通的 ASR、TTS 和语义续话后端；新增供应商另行适配。
+- [用户确认] 首版默认启用主人声纹校验，并要求先录入主人声纹。
+- [用户确认] 首版只验收 Windows 音频；Android 不纳入首版验收，后续另行接入或验收。
 
 ## 规划基线
 
-- [候选建议] P1 复用 Phone Agent Voice Gateway/ChannelBridge，DS Bot 负责插件生命周期、Bot 绑定和 UI；状态：未开始。
-- [候选建议] P2 实现设备端唤醒词到 Bot 的映射、切换和旧会话取消；状态：未开始。
-- [候选建议] P3 实现单设备多 Bot 绑定、唤醒词编辑和冲突校验；状态：未开始。
-- [候选建议] P4 实现语音输入、Bot 回复、TTS 播放、暂停、停止和重连状态；状态：未开始。
-- [候选建议] P5 完成 Windows 真实麦克风、扬声器与 DS Bot 集成验收；状态：未开始。原 Android 优先验收建议由 D-PAVP-005 的 Windows 首版要求替代。
+- [用户确认] P1 复用 Phone Agent Voice Gateway/ChannelBridge，DS Bot 负责插件生命周期、Bot 绑定和 UI；状态：进行中。开发基线见 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md)。
+- [用户确认] P2 实现设备端唤醒词到 Bot 的映射、切换和旧会话取消；状态：进行中。
+- [用户确认] P3 实现单设备多 Bot 绑定、唤醒词编辑和冲突校验；状态：进行中。
+- [用户确认] P4 实现语音输入、Bot 回复、TTS 播放、暂停、停止和重连状态；状态：进行中。
+- [用户确认] P5 完成 Windows 真实麦克风、扬声器与 DS Bot 集成验收；状态：未开始。Android 不纳入首版验收。
 
 ## 决策记录
 
@@ -38,15 +40,18 @@
 - [用户确认] D-PAVP-009 · 2026-11-06 · 插话或 Bot 切换只停止旧音频播放，不默认取消旧 Bot 后台工作；用户明确停止任务时才取消执行。原因：区分语音播放控制和 Bot 工作取消。影响：需要区分 playback cancellation 与 run cancellation。
 - [用户确认] D-PAVP-010 · 2026-11-06 · 语音转写复用对应 Bot 的现有聊天、模型、上下文、权限和审批规则。原因：保持文字与语音使用同一 Bot 会话语义。影响：插件不得绕过 DS Bot 的会话和权限边界。
 - [用户确认] D-PAVP-011 · 2026-11-06 · 首版只复用 Phone Agent 已接通的 ASR、TTS 和语义续话后端；新增供应商另行适配。原因：控制首版复杂度。影响：设置页只暴露当前后端支持的配置项。
+- [用户确认] D-PAVP-012 · 2026-11-06 · 首版默认启用主人声纹校验，使用前需要录入主人声纹。原因：用户确认采用默认启用。影响：插件需要提供声纹录入、状态显示、测试和失败提示；未完成录入时不能宣称语音链路可用。
+- [用户确认] D-PAVP-013 · 2026-11-06 · 首版只验收 Windows 音频，Android 延后。原因：用户明确收窄首版验收平台。影响：首版测试覆盖 Windows 麦克风、扬声器、唤醒、切换、声纹和语义续话；Android 代码复用不纳入首版完成标准。
+- [用户确认] D-PAVP-014 · 2026-11-06 · 按已确认开发文档开始实现，并在验证后提交、推送远程。原因：用户明确授权进入实施和交付。影响：本模块进入 In Progress；实现必须遵循开发文档，超出范围需记录并重新确认。
 
 ## 开发状态
 
 - [代码证据] Phone Agent 已有角色唤醒映射、激活角色更新、会话绑定、切换取消和设备状态链路，可作为插件侧的复用基础。
 - [代码证据] DS Bot 已有插件安装/检查、Voice Input、Voice Mode 和 Bot 预设绑定入口。
-- [现状重建] 当前尚未实现 Phone Agent 语音插件、Bot 唤醒词 UI、跨项目设备绑定或集成验收。
+- [代码证据] 已建立首版开发文档；DS Bot 配置模型、脱敏状态、设置 UI、语音输入提交入口和 Windows launcher 编排骨架已实现；完整 Phone Agent Bridge、回复音频回流和真实 Windows 验收仍未完成。
 
 ## 继续入口
 
-- 下一步：按 `collaborative-development-brief` 先整理并确认插件的协议边界、UI/交互、设备绑定和安全边界，再进入实现。
-- 需要先解决：DS Bot Bot ID 到 Phone Agent 角色/目标 ID 的映射、Windows 播放与现有 Voice Mode 的协调、凭据保存方式、唤醒词冲突规则、关闭语义连续对话判断后的明确唤醒行为、主人声纹是否为首版必需，以及 Android 是否纳入首版验收。
-- 验证入口：先运行 DS Bot 插件测试，再进行 Phone Agent Gateway/ChannelBridge 的受控连接测试，最后做 Windows 真实音频唤醒、Bot 切换、按 Bot 音色播放和语义续话验收。
+- 当前入口：按 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md) 补齐 `agent-events.v1` WebSocket Bridge、DS Bot 回复分段回流、运行配置/凭据注入和 Windows 真实音频验收。
+- 需要先解决：DS Bot Bot ID 到 Phone Agent 角色/目标 ID 的映射、Windows 播放与现有 Voice Mode 的协调、凭据保存方式、完整 Bridge 事件序列、声纹录入和更换流程。
+- 验证入口：DS Bot 测试、构建和 lint 已完成；下一步先补 Bridge 受控连接测试，再进行 Phone Agent Gateway/ChannelBridge 受控连接和 Windows 真实音频唤醒、Bot 切换、按 Bot 音色播放、语义续话验收。

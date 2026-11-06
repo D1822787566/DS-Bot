@@ -24,7 +24,7 @@ import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
 import { Overlays } from './overlays.js'
-import { BotPresets, openPluginManager, PLUGIN_CSS } from './plugin-page.js'
+import { BotPresets, PhoneAgentSettings, openPluginManager, PLUGIN_CSS } from './plugin-page.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
@@ -669,6 +669,10 @@ export function apply(ctx) {
   actions.openHarnessOnboarding = openHarnessOnboarding
   actions.openPlugins = () => openPluginManager({ actions, ui, navigation: ctx.get('pluginNavigation') })
     .catch(error => actions.reportError(error, 'plugins'))
+  actions.phoneAgent = () => call('phone-agent')
+  actions.phoneAgentUpdate = body => call('phone-agent-update', body)
+  actions.phoneAgentStart = () => call('phone-agent-start')
+  actions.phoneAgentStop = () => call('phone-agent-stop')
   // DSH's Models page, through DS Bot's own onboarding step while it is registered.
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.('settings.onboarding') ?? []).some(entry => entry.options?.id === MODELS_STEP)
@@ -923,16 +927,18 @@ export function apply(ctx) {
   // so a surface change withdraws the whole group and the outlets re-render.
   const installBotPresets = () => {
     let dispose = null
+    let disposePhone = null
     const sync = () => {
       if (roster.getSnapshot().pluginsEnabled && !dispose) {
         dispose = shadow('plugins.tab', { id: 'ds-bot-presets', order: 100, label: () => t('Bot presets'), inject: () => ({ actions }) }, BotPresets)
+        disposePhone = shadow('plugins.tab', { id: 'ds-bot-phone-agent', order: 110, label: () => t('Phone Agent'), inject: () => ({ actions }) }, PhoneAgentSettings)
       } else if (!roster.getSnapshot().pluginsEnabled && dispose) {
-        dispose(); dispose = null
+        dispose(); dispose = null; disposePhone?.(); disposePhone = null
       }
     }
     const off = roster.subscribe(sync)
     sync()
-    return () => { off(); dispose?.() }
+    return () => { off(); dispose?.(); disposePhone?.() }
   }
   const installShell = () => [
     () => installCompiledStyles(SHELL_CSS + PLUGIN_CSS, 'shell'),

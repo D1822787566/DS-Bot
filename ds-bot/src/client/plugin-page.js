@@ -121,6 +121,59 @@ export function BotPresets({ actions }) {
         }) }, t('Confirm'))) : null) : null)
 }
 
+export function PhoneAgentSettings({ actions }) {
+  const [value, setValue] = useState(null)
+  const [draft, setDraft] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const load = async () => {
+    const next = await actions.phoneAgent()
+    setValue(next)
+    setDraft({ config: { ...(next.config ?? {}) }, bots: Object.fromEntries((next.bots ?? []).map(bot => [bot.id, { wakeName: bot.wakeName ?? '', ttsVoice: bot.ttsVoice ?? '' }])) })
+  }
+  useEffect(() => { load().catch(failure => setError(failure.message)) }, [])
+  const run = async (task, done = 'Saved') => {
+    setBusy(true); setError(''); setMessage('')
+    try { const next = await task(); if (next?.config) { setValue(next); setDraft({ config: { ...next.config }, bots: Object.fromEntries((next.bots ?? []).map(bot => [bot.id, { wakeName: bot.wakeName ?? '', ttsVoice: bot.ttsVoice ?? '' }])) }) }; setMessage(done) }
+    catch (failure) { setError(failure.message) }
+    finally { setBusy(false) }
+  }
+  if (draft === null) return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent') }, h('p', { role: 'status' }, t('Loading…')))
+  const configField = (key, label, type = 'text') => h('label', { className: 'bt-phone-field' }, h('span', null, t(label)), h('input', { className: 'bt-input', type, value: draft.config[key] ?? '', onChange: event => setDraft(current => ({ ...current, config: { ...current.config, [key]: type === 'checkbox' ? event.target.checked : event.target.value } })) }))
+  const runtime = value?.runtime ?? { state: 'stopped' }
+  return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent'), 'aria-busy': busy },
+    h('div', { className: 'bt-preset-heading' }, h('div', null, h('h2', null, t('Phone Agent')), h('p', null, t('Windows voice runtime for Bot wake words and speech.'))),
+      runtime.state === 'stopped' || runtime.state === 'error'
+        ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent started') }, t('Start'))
+        : h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStop, 'Phone Agent stopped') }, t('Stop'))),
+    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.error ? h('p', null, runtime.error) : null),
+    error ? h('div', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
+    message ? h('p', { role: 'status' }, message) : null,
+    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Windows audio and LiveKit')),
+      configField('deviceId', 'Device ID'), configField('inputDeviceName', 'Microphone'), configField('outputDeviceName', 'Speaker'),
+      configField('livekitUrl', 'LiveKit local URL'), configField('livekitRoom', 'LiveKit room'),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save settings'))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, t('ASR and TTS')),
+      configField('asrModel', 'ASR model'), configField('asrModelDir', 'ASR model directory'), configField('speakerModelDir', 'Speaker model directory'), configField('speakerProfileDir', 'Speaker profile directory'),
+      configField('ttsModel', 'TTS model'), configField('ttsConfigPath', 'TTS configuration path'),
+      h('p', { className: 'bt-note' }, t('Speaker verification is enabled by default. Record or replace the owner profile before starting voice input.')),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save ASR/TTS'))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Advanced continuation')),
+      h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.continuationEnabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t('Enable semantic continuation')),
+      configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save advanced settings'))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Bots, wake words and voices')),
+      (value?.bots ?? []).map(bot => {
+        const profile = draft.bots[bot.id] ?? { wakeName: '', ttsVoice: '' }
+        return h('div', { className: 'bt-phone-bot', key: bot.id }, h('strong', null, bot.name),
+          h('label', { className: 'bt-phone-field' }, h('span', null, t('Wake word')), h('input', { className: 'bt-input', 'data-phone-agent-field': `${bot.id}:wakeName`, value: profile.wakeName, onInput: event => setDraft(current => ({ ...current, bots: { ...current.bots, [bot.id]: { ...current.bots[bot.id], wakeName: event.target.value } } })) })),
+          h('label', { className: 'bt-phone-field' }, h('span', null, t('TTS voice')), h('input', { className: 'bt-input', 'data-phone-agent-field': `${bot.id}:ttsVoice`, value: profile.ttsVoice, onInput: event => setDraft(current => ({ ...current, bots: { ...current.bots, [bot.id]: { ...current.bots[bot.id], ttsVoice: event.target.value } } })) })),
+          h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ botId: bot.id, profile }), 'Bot voice settings saved') }, t('Save')))
+      }))
+  )
+}
+
 export const PLUGIN_CSS = `
 .bt-preset-tools{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}
 .bt-preset-tools h2{font-size:18px;margin:0 0 6px}.bt-preset-tools h3{font-size:14px;margin:24px 0 10px}
@@ -135,4 +188,5 @@ export const PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}
 `

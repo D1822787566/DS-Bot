@@ -43,6 +43,20 @@ module.exports = __toCommonJS(index_exports);
 var NAMESPACE = "ds-bot";
 var ZH = {
   "Bot presets": "Bot 预设",
+  "Phone Agent": "Phone Agent",
+  "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
+  "Runtime: {state}": "运行状态：{state}",
+  "Windows audio and LiveKit": "Windows 音频与 LiveKit",
+  "Save settings": "保存设置",
+  "ASR and TTS": "ASR 与 TTS",
+  "Speaker verification is enabled by default. Record or replace the owner profile before starting voice input.": "主人声纹校验默认启用。开始语音输入前，请录入或替换主人声纹。",
+  "Save ASR/TTS": "保存 ASR/TTS",
+  "Advanced continuation": "高级连续对话",
+  "Enable semantic continuation": "启用语义连续对话",
+  "Save advanced settings": "保存高级设置",
+  "Bots, wake words and voices": "Bot、唤醒词与音色",
+  "Wake word": "唤醒词",
+  "TTS voice": "TTS 音色",
   "Refresh": "刷新",
   "Check a preset here, then choose it when creating a Bot.": "在这里检测预设，创建 Bot 时再选择使用。",
   "Installing a plugin does not verify its Bot compatibility.": "插件安装成功不代表它的预设已兼容 Bot，使用前请查看检测结果。",
@@ -15287,6 +15301,104 @@ function BotPresets({ actions }) {
     ) : null
   );
 }
+function PhoneAgentSettings({ actions }) {
+  const [value, setValue] = (0, import_react34.useState)(null);
+  const [draft, setDraft] = (0, import_react34.useState)(null);
+  const [busy, setBusy] = (0, import_react34.useState)(false);
+  const [error, setError] = (0, import_react34.useState)("");
+  const [message, setMessage] = (0, import_react34.useState)("");
+  const load = async () => {
+    const next = await actions.phoneAgent();
+    setValue(next);
+    setDraft({ config: { ...next.config ?? {} }, bots: Object.fromEntries((next.bots ?? []).map((bot) => [bot.id, { wakeName: bot.wakeName ?? "", ttsVoice: bot.ttsVoice ?? "" }])) });
+  };
+  (0, import_react34.useEffect)(() => {
+    load().catch((failure) => setError(failure.message));
+  }, []);
+  const run2 = async (task, done = "Saved") => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await task();
+      if (next?.config) {
+        setValue(next);
+        setDraft({ config: { ...next.config }, bots: Object.fromEntries((next.bots ?? []).map((bot) => [bot.id, { wakeName: bot.wakeName ?? "", ttsVoice: bot.ttsVoice ?? "" }])) });
+      }
+      ;
+      setMessage(done);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-phone-agent", "aria-label": t("Phone Agent") }, (0, import_react34.createElement)("p", { role: "status" }, t("Loading…")));
+  const configField = (key, label, type = "text") => (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t(label)), (0, import_react34.createElement)("input", { className: "bt-input", type, value: draft.config[key] ?? "", onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, [key]: type === "checkbox" ? event.target.checked : event.target.value } })) }));
+  const runtime = value?.runtime ?? { state: "stopped" };
+  return (0, import_react34.createElement)(
+    "section",
+    { className: "bt-phone-agent", "aria-label": t("Phone Agent"), "aria-busy": busy },
+    (0, import_react34.createElement)(
+      "div",
+      { className: "bt-preset-heading" },
+      (0, import_react34.createElement)("div", null, (0, import_react34.createElement)("h2", null, t("Phone Agent")), (0, import_react34.createElement)("p", null, t("Windows voice runtime for Bot wake words and speech."))),
+      runtime.state === "stopped" || runtime.state === "error" ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStart, "Phone Agent started") }, t("Start")) : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStop, "Phone Agent stopped") }, t("Stop"))
+    ),
+    (0, import_react34.createElement)("div", { className: "bt-plugin-report", role: "status" }, (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })), runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null),
+    error ? (0, import_react34.createElement)("div", { className: "bt-error", role: "alert" }, hostText(error)) : null,
+    message ? (0, import_react34.createElement)("p", { role: "status" }, message) : null,
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, t("Windows audio and LiveKit")),
+      configField("deviceId", "Device ID"),
+      configField("inputDeviceName", "Microphone"),
+      configField("outputDeviceName", "Speaker"),
+      configField("livekitUrl", "LiveKit local URL"),
+      configField("livekitRoom", "LiveKit room"),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ config: draft.config }), "Settings saved") }, t("Save settings"))
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, t("ASR and TTS")),
+      configField("asrModel", "ASR model"),
+      configField("asrModelDir", "ASR model directory"),
+      configField("speakerModelDir", "Speaker model directory"),
+      configField("speakerProfileDir", "Speaker profile directory"),
+      configField("ttsModel", "TTS model"),
+      configField("ttsConfigPath", "TTS configuration path"),
+      (0, import_react34.createElement)("p", { className: "bt-note" }, t("Speaker verification is enabled by default. Record or replace the owner profile before starting voice input.")),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ config: draft.config }), "Settings saved") }, t("Save ASR/TTS"))
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, t("Advanced continuation")),
+      (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.continuationEnabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t("Enable semantic continuation")),
+      configField("continuationModel", "Continuation model"),
+      configField("continuationUrl", "Continuation local URL"),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ config: draft.config }), "Settings saved") }, t("Save advanced settings"))
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, t("Bots, wake words and voices")),
+      (value?.bots ?? []).map((bot) => {
+        const profile = draft.bots[bot.id] ?? { wakeName: "", ttsVoice: "" };
+        return (0, import_react34.createElement)(
+          "div",
+          { className: "bt-phone-bot", key: bot.id },
+          (0, import_react34.createElement)("strong", null, bot.name),
+          (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t("Wake word")), (0, import_react34.createElement)("input", { className: "bt-input", "data-phone-agent-field": `${bot.id}:wakeName`, value: profile.wakeName, onInput: (event) => setDraft((current) => ({ ...current, bots: { ...current.bots, [bot.id]: { ...current.bots[bot.id], wakeName: event.target.value } } })) })),
+          (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t("TTS voice")), (0, import_react34.createElement)("input", { className: "bt-input", "data-phone-agent-field": `${bot.id}:ttsVoice`, value: profile.ttsVoice, onInput: (event) => setDraft((current) => ({ ...current, bots: { ...current.bots, [bot.id]: { ...current.bots[bot.id], ttsVoice: event.target.value } } })) })),
+          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ botId: bot.id, profile }), "Bot voice settings saved") }, t("Save"))
+        );
+      })
+    )
+  );
+}
 var PLUGIN_CSS = `
 .bt-preset-tools{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}
 .bt-preset-tools h2{font-size:18px;margin:0 0 6px}.bt-preset-tools h3{font-size:14px;margin:24px 0 10px}
@@ -15301,6 +15413,7 @@ var PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}
 `;
 
 // src/client/create-bot.js
@@ -22755,6 +22868,10 @@ function apply(ctx) {
   actions.openHarnessSettings = openHarnessSettings;
   actions.openHarnessOnboarding = openHarnessOnboarding;
   actions.openPlugins = () => openPluginManager({ actions, ui: ui2, navigation: ctx.get("pluginNavigation") }).catch((error) => actions.reportError(error, "plugins"));
+  actions.phoneAgent = () => call("phone-agent");
+  actions.phoneAgentUpdate = (body) => call("phone-agent-update", body);
+  actions.phoneAgentStart = () => call("phone-agent-start");
+  actions.phoneAgentStop = () => call("phone-agent-stop");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);
@@ -22980,12 +23097,16 @@ function apply(ctx) {
   };
   const installBotPresets = () => {
     let dispose = null;
+    let disposePhone = null;
     const sync = () => {
       if (roster.getSnapshot().pluginsEnabled && !dispose) {
         dispose = shadow("plugins.tab", { id: "ds-bot-presets", order: 100, label: () => t("Bot presets"), inject: () => ({ actions }) }, BotPresets);
+        disposePhone = shadow("plugins.tab", { id: "ds-bot-phone-agent", order: 110, label: () => t("Phone Agent"), inject: () => ({ actions }) }, PhoneAgentSettings);
       } else if (!roster.getSnapshot().pluginsEnabled && dispose) {
         dispose();
         dispose = null;
+        disposePhone?.();
+        disposePhone = null;
       }
     };
     const off = roster.subscribe(sync);
@@ -22993,6 +23114,7 @@ function apply(ctx) {
     return () => {
       off();
       dispose?.();
+      disposePhone?.();
     };
   };
   const installShell = () => [

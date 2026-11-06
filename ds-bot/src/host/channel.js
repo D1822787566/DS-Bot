@@ -116,7 +116,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'phone-agent'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -175,6 +175,19 @@ export function install(rt) {
       if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, 'bot/read-only')
       switch (endpoint) {
         case 'plugins': return ok(await rt.pluginCatalog())
+        case 'phone-agent': return ok(rt.phoneAgent())
+        case 'phone-agent-update':
+          await rt.load()
+          return ok(await rt.phoneAgentUpdate(body))
+        case 'phone-agent-start':
+          await rt.load()
+          return ok(await rt.phoneAgentStart())
+        case 'phone-agent-stop':
+          await rt.load()
+          return ok(await rt.phoneAgentStop())
+        case 'phone-agent-submit':
+          await rt.load()
+          return ok(await rt.phoneAgentSubmit(body))
         case 'plugin-search': return ok(await rt.pluginSearch(body))
         case 'plugin-change': return ok(await rt.pluginChange(body))
         case 'preset-check': return ok(await rt.checkBotPreset(String(body.id ?? '')))
