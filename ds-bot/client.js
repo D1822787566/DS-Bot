@@ -54,6 +54,8 @@ var ZH = {
   "Advanced continuation": "高级连续对话",
   "Enable semantic continuation": "启用语义连续对话",
   "Save advanced settings": "保存高级设置",
+  "Phone Agent runtime folder": "Phone Agent 运行目录",
+  "Phone Agent runtime config": "Phone Agent 运行配置",
   "Bots, wake words and voices": "Bot、唤醒词与音色",
   "Wake word": "唤醒词",
   "TTS voice": "TTS 音色",
@@ -15379,6 +15381,8 @@ function PhoneAgentSettings({ actions }) {
       (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.continuationEnabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t("Enable semantic continuation")),
       configField("continuationModel", "Continuation model"),
       configField("continuationUrl", "Continuation local URL"),
+      configField("runtimeRoot", "Phone Agent runtime folder"),
+      configField("configPath", "Phone Agent runtime config"),
       (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ config: draft.config }), "Settings saved") }, t("Save advanced settings"))
     ),
     (0, import_react34.createElement)(
