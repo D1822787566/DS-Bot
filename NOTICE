@@ -7,6 +7,12 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party code in this repository
 ==============================================================================
 
+DSH Markets / dshmarket (https://github.com/dsh-market/dsh-market)
+MIT License, Copyright (c) 2026 fkysly and dsh-market contributors
+
+  The desktop app bundles this unmodified dependency for community plugin
+  discovery. Its original MIT license is included in the dependency's LICENSE.
+
 DeepSeek Harness (https://github.com/deepseek-ai/deepseek-harness)
 MIT License, Copyright (c) 2026 DeepSeek
 

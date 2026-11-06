@@ -1,0 +1,4 @@
+interface:
+  display_name: "Module Memory"
+  short_description: "Preserve module plans, decisions, and continuation points"
+  default_prompt: "Read the affected module memory, continue the work, and update durable state changes."

@@ -123,6 +123,12 @@ For larger work, a group chat can run a goal: the admin aligns with you on what 
 
 ![Group chat: the admin, Chief, hands the work to Writer and Coder](docs/images/group.png)
 
+### Plugins and Bot presets (desktop app)
+
+Open **Plugins** in the Bot sidebar to use DeepSeek Harness's native plugin page for discovery, details, installation, and management. The **Bot presets** tab adds compatibility checks and recovery. The desktop app includes the community **DSH Markets** plugin (`dshmarket`) and supplies its catalog on first use when no sources are configured. Existing sources and later removal are preserved. A Main Bot can also inspect and manage plugins with `bot_plugins`; existing DSH tool permissions still apply.
+
+When creating a Bot, choose a **Work preset**. DS Bot keeps its identity, instructions, memory and team tools; its group conversations and later chat parts retain the same preset. Check the compatibility report before selecting it. Third-party workflows require explicit acceptance while unverified; presets with known incompatible tool calling cannot be selected, but their plugins can still be installed. This does not certify a plugin's safety or its own interface. If a preset disappears, Plugins offers an explicit **Use standard** recovery that keeps earlier chats.
+
 ### Capabilities
 
 Settings → **Capabilities** is a shared library of MCP servers, skills and packs. Add a capability to a Bot in its settings; it is available from that Bot's next message in its own chat and group chats. A local MCP command that a Bot adds needs your approval before it can run. While other Bots use a capability, only you or a Main Bot can change or delete it.

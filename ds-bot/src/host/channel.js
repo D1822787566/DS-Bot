@@ -81,6 +81,7 @@ export function install(rt) {
     browser: rt.browserEnabled,
     // False when config.memory turns memory off: no Memory row or panel.
     memory: rt.memoryEnabled !== false,
+    pluginsEnabled: rt.pluginsEnabled,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
   })
@@ -115,7 +116,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'phone-agent'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -173,6 +174,25 @@ export function install(rt) {
       const readOnly = rt.readOnly()
       if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, 'bot/read-only')
       switch (endpoint) {
+        case 'plugins': return ok(await rt.pluginCatalog())
+        case 'phone-agent': return ok(rt.phoneAgent())
+        case 'phone-agent-update':
+          await rt.load()
+          return ok(await rt.phoneAgentUpdate(body))
+        case 'phone-agent-start':
+          await rt.load()
+          return ok(await rt.phoneAgentStart())
+        case 'phone-agent-stop':
+          await rt.load()
+          return ok(await rt.phoneAgentStop())
+        case 'phone-agent-submit':
+          await rt.load()
+          return ok(await rt.phoneAgentSubmit(body))
+        case 'plugin-search': return ok(await rt.pluginSearch(body))
+        case 'plugin-change': return ok(await rt.pluginChange(body))
+        case 'preset-check': return ok(await rt.checkBotPreset(String(body.id ?? '')))
+        case 'preset-confirm': return ok(await rt.confirmBotPreset(body.botId, body.fingerprint))
+        case 'preset-recover': return ok(await rt.recoverBotPreset(body.botId))
         case 'state': {
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (readOnly === undefined) await rt.bootstrap()
@@ -264,7 +284,7 @@ export function install(rt) {
         }
         case 'create-bot': {
           await rt.bootstrap()
-          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
+          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir, agentPreset: body.agentPreset, presetFingerprint: body.presetFingerprint })
           return ok(bot)
         }
         case 'update-bot':

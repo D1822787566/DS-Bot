@@ -20,6 +20,12 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
   // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
   const openSettings = (page = 'general', id = null) => { ui.set(state => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null })) }
   return {
+    plugins: () => call('plugins'),
+    searchPlugins: payload => call('plugin-search', payload),
+    changePlugin: payload => call('plugin-change', payload),
+    checkPreset: id => call('preset-check', { id }),
+    confirmPreset: (botId, fingerprint) => after(call('preset-confirm', { botId, fingerprint })),
+    recoverPreset: botId => after(call('preset-recover', { botId })),
     openNewChat: (mode) => { ui.set(state => ({ ...state, newChat: mode, menu: null, palette: null })) },
     openPalette: (query = '') => { ui.set(state => ({ ...state, palette: { query, token: Date.now() }, newChat: null, menu: null })) },
     // The token keeps a late exit timer from closing a palette opened again since.

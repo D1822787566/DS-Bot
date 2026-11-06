@@ -37,6 +37,12 @@ describe('the app profile', () => {
     for (const id of ['webserver', 'connection', 'bot']) assert.ok(on.has(id), `${id} is mounted`)
     assert.ok(rows(entries).some((entry) => DSH_WEB_FRONT_END.test(entry.name ?? '')), 'the DSH Web front end is mounted')
   })
+
+  test('ships the community marketplace and the DSH index reader by default', () => {
+    assert.ok(BUNDLES.includes('dshmarket'))
+    assert.ok(BUNDLES.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
+    assert.ok(entries.some(entry => entry.name === 'dshmarket' && entry.disabled !== true))
+  })
 })
 
 describe('claimBundles', () => {

@@ -81,6 +81,22 @@ test('a new Bot Session is made with the standard preset when DSH serves it', as
   assert.deepEqual(created, [{ workspaceId: 'w1', agentPreset: 'standard' }])
 })
 
+test('an explicitly selected Bot preset is used instead of standard', async (t) => {
+  const { rt, created, stop } = start({ presets: [{ id: 'standard' }, { id: 'learning' }] })
+  t.after(stop)
+  await rt.load()
+  await rt.createSession('Teacher', { agentPreset: 'learning' })
+  assert.equal(created[0].agentPreset, 'learning')
+})
+
+test('a missing explicit preset refuses creation instead of falling back', async (t) => {
+  const { rt, created, stop } = start({ presets: [{ id: 'standard' }] })
+  t.after(stop)
+  await rt.load()
+  await assert.rejects(rt.createSession('Teacher', { agentPreset: 'removed' }), /preset.*unavailable/i)
+  assert.equal(created.length, 0)
+})
+
 test('without a usable standard preset a Bot Session keeps DSH\'s default', async (t) => {
   for (const presets of [undefined, [{ id: 'ptc' }], [{ id: 'standard', broken: 'failed to start' }]]) {
     const { rt, created, stop } = start({ presets })

@@ -9,6 +9,7 @@ import { createPayload, freshBotName, startModel } from './bot-draft.js'
 import { ModelMenu } from './model-menu.js'
 import { hostText, t } from './i18n.js'
 import { nameProblem } from '../shared/mentions.js'
+import { PresetPicker } from './plugin-page.js'
 
 const pick = list => list[Math.floor(Math.random() * list.length)]
 const randomLook = (avoid = {}) => {
@@ -28,6 +29,7 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
   const [effort, setEffort] = useState(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [preset, setPreset] = useState({ id: '', ready: true })
   const fileRef = useRef(null)
   const frame = useRef(null)
   useEscape(onBack)
@@ -38,11 +40,11 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
   const clash = roster.bots.some(bot => bot.name.toLowerCase() === finalName.toLowerCase())
   const problem = nameProblem(finalName)
   const create = async () => {
-    if (busy || clash || problem) return
+    if (busy || clash || problem || !preset.ready) return
     setError('')
     setBusy(true)
     try {
-      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief }))
+      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief, agentPreset: preset.id, presetFingerprint: preset.fingerprint }))
       onCreated(bot)
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -93,10 +95,11 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
         : (roster.models ?? []).length > 0
           ? t('Pick a model here, or the Bot asks for one in its chat.')
           : t('Add a provider and a model in DeepSeek Harness first, or pick one in the Bot\'s chat later.'))),
+    roster.pluginsEnabled ? h(PresetPicker, { actions, onChange: setPreset }) : null,
     error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null,
     h('div', { className: 'bt-create-foot' },
       h('button', { type: 'button', className: 'bt-soft', onClick: onBack }, canGoBack ? t('Back') : t('Cancel')),
-      h('button', { type: 'button', className: 'bt-send bt-create-go', disabled: busy || clash || Boolean(problem), onClick: () => void create() }, busy ? t('Creating…') : t('Create'))))
+      h('button', { type: 'button', className: 'bt-send bt-create-go', disabled: busy || clash || Boolean(problem) || !preset.ready, onClick: () => void create() }, busy ? t('Creating…') : t('Create'))))
   if (inline) return h('div', { ref: frame, className: 'bt-create-inline', role: 'group', 'aria-label': t('Create Bot') }, card)
   return h('div', { className: 'bt-create', role: 'dialog', 'aria-label': t('Create Bot') },
     h('div', { className: 'bt-create-head' },

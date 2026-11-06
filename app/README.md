@@ -51,15 +51,18 @@ The Host reads model settings and keys the way DSH does: environment variables s
 
 ## The profile
 
-The Host's profile `ds-bot` is in `profiles/ds-bot` in the data location. It stacks three bundles, and after them the bundles that the user installs:
+The Host's profile `ds-bot` is in `profiles/ds-bot` in the data location. It stacks these bundles, and after them the bundles that the user installs:
 
 | Bundle | What it adds |
 |---|---|
 | `@deepseek-ai/dsh-base` | DSH's shared core: models, Sessions, tools, settings, plugin management |
 | `@deepseek-ai/dsh-web-app` | DSH's Web front end, which the window shows, and the host services that it and ds-bot use |
+| `@deepseek-ai/dsh-experimental-voice-input-bundle` | Voice input |
+| `@deepseek-ai/dsh-experimental-plugin-market-bundle` | DSH's configured index reader |
+| `dshmarket` | The community DSH Markets plugin; its catalog is the default source on first use when no sources exist |
 | `ds-bot` | The Bot team |
 
-At every start the Host puts these three bundles at the head of the profile's bundle list. Settings for one machine go into the profile's `cordis.patch.yml`, as in DSH. A profile from an earlier build that lists `dsbot-engine` gets `@deepseek-ai/dsh-web-app` in its place.
+At every start the Host puts these bundles at the head of the profile's bundle list. Settings for one machine go into the profile's `cordis.patch.yml`, as in DSH. A profile from an earlier build that lists `dsbot-engine` gets `@deepseek-ai/dsh-web-app` in its place.
 
 ## Check a change
 

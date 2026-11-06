@@ -40,6 +40,33 @@ const AVATAR_PARAM = {
 const WORKING_DIRECTORY_TOOL = 'working_directory'
 
 export function install(rt) {
+  if (rt.pluginsEnabled) {
+    rt.teamTools.push(defineTool({
+      name: 'bot_plugins',
+      description: 'Inspect current-profile plugins and Bot presets. Main Bots may install, enable or remove plugins; installation may require an app restart. No additional confirmation is required. This changes the whole profile. For updates, inspect the installed source, remove and reinstall through these same operations.',
+      parameters: {
+        action: { type: 'string', required: true, enum: ['list', 'search', 'check', 'inspect', 'install', 'remove', 'enable'] },
+        spec: { type: 'string', description: 'Package name, Git address or local package path for inspect/install' },
+        registry: { type: 'string', description: 'Optional registry returned by a market entry install target' },
+        name: { type: 'string', description: 'Bundle name for remove/enable, or preset id for check' },
+        enabled: { type: 'boolean' },
+        url: { type: 'string', description: 'Configured plugin index URL from list' },
+        text: { type: 'string' },
+      },
+      output,
+      async execute(args, exec) {
+        await rt.load()
+        try {
+          if (args.action === 'check') return JSON.stringify(await rt.checkBotPreset(args.name))
+          if (args.action === 'search') return JSON.stringify(await rt.pluginSearch(args))
+          if (args.action === 'list') return JSON.stringify(await rt.pluginCatalog())
+          if (!rt.isMain(rt.selfOf(exec.agent?.id))) return 'Only a Main Bot can change plugins. Existing DSH plugin tools keep their own permissions.'
+          const result = await rt.pluginChange(args)
+          return JSON.stringify({ application: result.application, bundle: result.bundle, status: result.status, reason: result.reason, error: result.error, affectedBots: (await rt.pluginCatalog()).affected })
+        } catch (error) { return `Could not manage plugins: ${error.message}` }
+      },
+    }))
+  }
   const { ctx, state } = rt
 
   const callerBot = (exec) => rt.botOf(rt.selfOf(exec.agent?.id))
@@ -320,6 +347,8 @@ export function install(rt) {
       effort: { type: 'string', description: 'Thinking level for the model, as list_bot_models shows it. Only when the user names one.' },
       work_dir: WORK_DIR_PARAM,
       avatar: AVATAR_PARAM,
+      agentPreset: { type: 'string', description: 'Optional desktop Bot preset id from bot_plugins. Default: standard. Check it first.' },
+      presetFingerprint: { type: 'string', description: 'Current fingerprint from bot_plugins check, only after the user accepts an unverified preset.' },
     },
     output,
     async execute(args, exec) {

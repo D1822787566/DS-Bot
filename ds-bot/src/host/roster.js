@@ -72,8 +72,13 @@ export function install(rt) {
   // Under the PTC preset (DSH Desktop's default) a model may call only run_code, which
   // turns down the group_relay call that a group chat's Session is given. A Session
   // keeps the preset it is made with.
-  async function botPreset() {
+  async function botPreset(selected) {
     const presets = ctx.get?.('agentPresets')
+    if (selected !== undefined) {
+      const preset = (await presets?.list?.() ?? []).find(item => item.id === selected && item.broken === undefined)
+      if (!preset) throw new Error(`Bot preset unavailable: ${selected}`)
+      return { agentPreset: selected }
+    }
     if (presets === undefined) return {}
     const standard = (await presets.list()).some(preset => preset.id === 'standard' && preset.broken === undefined)
     return standard ? { agentPreset: 'standard' } : {}
@@ -82,7 +87,7 @@ export function install(rt) {
   // `dir` is a working folder outside the team workspace. Such a Session is made by cwd
   // alone, so it joins no DSH workspace and the user's own project lists stay as they are —
   // unless the folder is already registered as a workspace, which it then joins (#710).
-  async function createSession(title, { dir } = {}) {
+  async function createSession(title, { dir, agentPreset } = {}) {
     // A Bot's tools run here too; while another dsh holds the team, a new Session would
     // belong to no saved Bot.
     const readOnly = rt.readOnly()
@@ -91,7 +96,7 @@ export function install(rt) {
     if (dir !== undefined && !usable) rt.warn('ds-bot: the working folder %s is gone; %s starts in the team workspace', dir, title)
     const known = usable ? await ctx.workspaceRegistry.resolveByPath(dir) : undefined
     const place = known !== undefined ? { workspaceId: known.id } : usable ? { cwd: dir } : { workspaceId: await ensureWorkspace() }
-    const { sessionId } = await ctx.sessionController.create({ ...place, ...await botPreset() })
+    const { sessionId } = await ctx.sessionController.create({ ...place, ...await botPreset(agentPreset) })
     const agent = await rt.resolveAgent(sessionId)
     await ctx.sessionTitle.rename(agent.session, title)
     return sessionId
@@ -145,7 +150,8 @@ export function install(rt) {
     return holdName('bot', cleanName, () => buildBot(cleanName, options))
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, agentPreset, presetFingerprint }) {
+    const report = agentPreset === undefined ? undefined : await rt.selectBotPreset(agentPreset, presetFingerprint)
     const cleanAvatarValue = cleanAvatar(avatar)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultBotModel()
@@ -160,7 +166,7 @@ export function install(rt) {
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
     const clash = dir === undefined ? undefined : await rt.privateClash(dir)
     if (clash) throw new Error(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${cleanName} cannot work there`)
-    const id = await createSession(cleanName, { dir })
+    const id = await createSession(cleanName, { dir, agentPreset })
     try {
       state.bots[id] = {
         id,
@@ -176,6 +182,7 @@ export function install(rt) {
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
         capabilities: [],
+        ...(report ? { agentPreset, presetFingerprint: report.fingerprint } : {}),
       }
       if (main) state.mainBotIds.push(id)
       const creator = rt.botOf(createdBy)
@@ -310,6 +317,7 @@ export function install(rt) {
       effort: served ? (bot.effort ?? null) : undefined,
       workDir,
       copyOf: bot.id,
+      ...(bot.agentPreset ? { agentPreset: bot.agentPreset, presetFingerprint: bot.presetFingerprint } : {}),
     })
   }
 
