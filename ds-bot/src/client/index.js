@@ -929,10 +929,10 @@ export function apply(ctx) {
     let dispose = null
     let disposePhone = null
     const sync = () => {
-      if (roster.getSnapshot().pluginsEnabled && !dispose) {
+      if (roster.getSnapshot().pluginsEnabled !== false && !dispose) {
         dispose = shadow('plugins.tab', { id: 'ds-bot-presets', order: 100, label: () => t('Bot presets'), inject: () => ({ actions }) }, BotPresets)
         disposePhone = shadow('plugins.tab', { id: 'ds-bot-phone-agent', order: 110, label: () => t('Phone Agent'), inject: () => ({ actions }) }, PhoneAgentSettings)
-      } else if (!roster.getSnapshot().pluginsEnabled && dispose) {
+      } else if (roster.getSnapshot().pluginsEnabled === false && dispose) {
         dispose(); dispose = null; disposePhone?.(); disposePhone = null
       }
     }

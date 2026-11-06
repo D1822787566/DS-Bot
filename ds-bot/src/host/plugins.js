@@ -6,7 +6,7 @@ const MARKET_INDEX = 'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json
 
 export function install(rt) {
   const { ctx, state } = rt
-  const desktop = process.env.DS_BOT_APP === '1'
+  const desktop = process.env.DS_BOT_APP === '1' || ctx.get?.('profileContext')?.name === 'desktop'
   const manager = () => ctx.get?.('pluginManager')
   const registry = () => ctx.get?.('agentPresets')
   const requireDesktop = () => {

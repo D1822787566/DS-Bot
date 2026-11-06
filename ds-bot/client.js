@@ -10702,7 +10702,7 @@ function TeamSidebar(props) {
     "div",
     { className: wideContent ? "bt-side" : "bt-side bt-rail", onKeyDown: typeToSearch },
     top,
-    roster.pluginsEnabled ? (0, import_react21.createElement)("button", { type: "button", className: "bt-soft", title: t("Plugins"), "aria-label": t("Plugins"), onClick: actions.openPlugins }, wideContent ? t("Plugins") : (0, import_react21.createElement)(ConnectorIcon)) : null,
+    roster.pluginsEnabled !== false ? (0, import_react21.createElement)("button", { type: "button", className: "bt-soft", title: t("Plugins"), "aria-label": t("Plugins"), onClick: actions.openPlugins }, wideContent ? t("Plugins") : (0, import_react21.createElement)(ConnectorIcon)) : null,
     wideContent && roster.readOnly ? (0, import_react21.createElement)("div", { className: "bt-hint bt-read-only", role: "status" }, hostText(roster.readOnly)) : null,
     (0, import_react21.createElement)(
       "div",
@@ -23103,10 +23103,10 @@ function apply(ctx) {
     let dispose = null;
     let disposePhone = null;
     const sync = () => {
-      if (roster.getSnapshot().pluginsEnabled && !dispose) {
+      if (roster.getSnapshot().pluginsEnabled !== false && !dispose) {
         dispose = shadow("plugins.tab", { id: "ds-bot-presets", order: 100, label: () => t("Bot presets"), inject: () => ({ actions }) }, BotPresets);
         disposePhone = shadow("plugins.tab", { id: "ds-bot-phone-agent", order: 110, label: () => t("Phone Agent"), inject: () => ({ actions }) }, PhoneAgentSettings);
-      } else if (!roster.getSnapshot().pluginsEnabled && dispose) {
+      } else if (roster.getSnapshot().pluginsEnabled === false && dispose) {
         dispose();
         dispose = null;
         disposePhone?.();
