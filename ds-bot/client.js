@@ -10480,7 +10480,7 @@ function TeamSidebar(props) {
   const main = roster.byId[roster.mainBotId];
   useListGlide(listRef, wideContent, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
-  useReportReady(roster.ready, roster);
+  useReportReady(true, roster);
   const openWidth = drag?.width ?? frameSnap.sidebarWidth;
   const ourWidth = shown === "rail" ? RAIL_WIDTH : openWidth;
   const pushed = mode === "open" ? openWidth : mode === "hidden" ? 0 : RAIL_WIDTH;
@@ -11177,10 +11177,9 @@ function FooterAccount(props) {
   if (seated) return null;
   return (0, import_react21.createElement)("span", { className: "bt-foot-account" }, (0, import_react21.createElement)(AccountLauncher, { ...props, seat: false }));
 }
-function BotReturn({ wide, useSurface, useRoster, actions }) {
+function BotReturn({ wide, useSurface, actions }) {
   const mode = useSurface((value) => value.mode);
-  const ready = useRoster((value) => value.ready);
-  useReportReady(mode === "agent" && ready);
+  useReportReady(mode === "agent");
   if (mode !== "agent") return null;
   return (0, import_react21.createElement)(
     "button",

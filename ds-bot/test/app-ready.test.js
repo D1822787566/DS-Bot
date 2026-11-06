@@ -84,13 +84,13 @@ function readyCalls() {
   return { calls, app: { ready: (...args) => { calls.push(args) } } }
 }
 
-test('the desktop app hears once that the team sidebar drew the first state', async () => {
+test('the desktop app hears once that the team sidebar drew before the first state', async () => {
   const { calls, app } = readyCalls()
   const { TeamSidebar } = page(app)
   const sidebar = mount(TeamSidebar)
   sidebar(sidebarProps(BEFORE_STATE))
   await setImmediate()
-  assert.deepEqual(calls, [], 'the sidebar is not ready before the first state')
+  assert.deepEqual(calls, [[]], 'the desktop hand-off must not wait for the state API')
   sidebar(sidebarProps(TEAM))
   await setImmediate()
   assert.deepEqual(calls, [[]])
@@ -132,7 +132,7 @@ test('in Agent mode the return button reports what the team sidebar would', asyn
   assert.equal(button(returnProps('bot', TEAM)), null)
   button(returnProps('agent', BEFORE_STATE))
   await setImmediate()
-  assert.deepEqual(calls, [])
+  assert.deepEqual(calls, [[]])
   button(returnProps('agent', TEAM))
   mount(TeamSidebar)(sidebarProps(TEAM))
   await setImmediate()

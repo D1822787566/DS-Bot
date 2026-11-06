@@ -340,7 +340,10 @@ export function TeamSidebar(props) {
   const main = roster.byId[roster.mainBotId]
   useListGlide(listRef, wideContent, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
-  useReportReady(roster.ready, roster)
+  // The desktop hand-off is a view-level concern. The first state request can
+  // take longer than the start window's deadline while the host boots its
+  // storage and model catalog, so do not hold the window behind roster.ready.
+  useReportReady(true, roster)
 
   // Our column pushes the conversation over by what it takes beyond the shell's
   // collapsed track; a drawer floats over the rail's place, so it pushes as much
@@ -1028,11 +1031,12 @@ export function FooterAccount(props) {
 
 // The only entry registered in every mode: in Agent mode the whole Bot surface is
 // withdrawn, and this button in the shell's own footer is the way back.
-export function BotReturn({ wide, useSurface, useRoster, actions }) {
+export function BotReturn({ wide, useSurface, actions }) {
   const mode = useSurface(value => value.mode)
-  const ready = useRoster(value => value.ready)
   // Agent mode draws no team sidebar; there this button is the team interface.
-  useReportReady(mode === 'agent' && ready)
+  // Agent mode still has a visible team return surface before the first state
+  // arrives. Let the desktop shell hand over as soon as that surface mounts.
+  useReportReady(mode === 'agent')
   if (mode !== 'agent') return null
   return h('button', { type: 'button', className: 'bt-return', 'aria-label': t('DS Bot'), title: t('DS Bot'), onClick: () => actions.setSurface('bot') },
     h(BotMark, { look: MAIN_LOOK, size: 20 }),
