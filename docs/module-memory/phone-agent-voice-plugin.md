@@ -50,9 +50,10 @@
 - [代码证据] DS Bot 已有插件安装/检查、Voice Input、Voice Mode 和 Bot 预设绑定入口。
 - [代码证据] 已建立首版开发文档；DS Bot 配置模型、脱敏状态、设置 UI、语音输入提交入口和 Windows launcher 编排骨架已实现；完整 Phone Agent Bridge、回复音频回流和真实 Windows 验收仍未完成。
 - [代码证据] 首版基础实现已合并到 `main` 并推送远程，合并提交为 `45e911a`；工作区当前使用 `main`，实现剩余范围仍未完成。
+- [代码证据] 已在 `b19c471` 修正桌面 Host 的插件能力判断，并重新生成客户端包；当前启动窗口仍出现团队界面超时，Phone Agent 标签尚未完成运行中界面验收。
 
 ## 继续入口
 
 - 当前入口：按 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md) 补齐 `agent-events.v1` WebSocket Bridge、DS Bot 回复分段回流、运行配置/凭据注入和 Windows 真实音频验收。
 - 需要先解决：DS Bot Bot ID 到 Phone Agent 角色/目标 ID 的映射、Windows 播放与现有 Voice Mode 的协调、凭据保存方式、完整 Bridge 事件序列、声纹录入和更换流程。
-- 验证入口：DS Bot 测试、构建和 lint 已完成；下一步先补 Bridge 受控连接测试，再进行 Phone Agent Gateway/ChannelBridge 受控连接和 Windows 真实音频唤醒、Bot 切换、按 Bot 音色播放、语义续话验收。后续开发从 `main` 继续。
+- 验证入口：DS Bot 定向测试和构建通过；当前阻塞是桌面启动时团队页面未在 20 秒内回报 ready，需要先修复或稳定启动流程，再验证 Plugins 页中的 Phone Agent 标签；之后补 Bridge 受控连接和 Windows 真实音频验收。后续开发从 `main` 继续。
