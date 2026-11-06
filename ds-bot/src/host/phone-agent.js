@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/
 const validName = value => typeof value === 'string' && value.length >= 1 && value.length <= 120
@@ -9,6 +9,7 @@ const validName = value => typeof value === 'string' && value.length >= 1 && val
 const SECRET_KEYS = new Set(['bridgeCredential', 'livekitSecret', 'livekitKey', 'ttsWorkerCredential', 'continuationApiKey'])
 
 const text = (value, max = 240) => typeof value === 'string' ? value.trim().slice(0, max) : ''
+const textOr = (value, fallback, max = 240) => text(value, max) || fallback
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback
 const finite = (value, fallback, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
 const id = (value, label) => {
@@ -49,6 +50,77 @@ export function defaultPhoneAgentConfig() {
     pythonPath: '',
     configPath: '',
   }
+}
+
+// The Phone Agent project already records the machine's Windows runtime values
+// outside DS Bot. Import only non-secret fields so the first settings view is
+// useful instead of showing an empty form.
+export function phoneAgentDefaultsFromRuntime(runtime = {}, desktop = {}, tts = {}, paths = {}) {
+  const base = defaultPhoneAgentConfig()
+  const deviceId = textOr(desktop.device_id ?? runtime.device_id, base.deviceId, 96)
+  return {
+    ...base,
+    deviceId,
+    targetId: textOr(desktop.target_id ?? runtime.target_id, deviceId, 96),
+    inputDeviceName: textOr(desktop.windows_input_device_name ?? runtime.windows_input_device_name, base.inputDeviceName, 160),
+    outputDeviceName: textOr(desktop.windows_output_device_name ?? runtime.windows_output_device_name, base.outputDeviceName, 160),
+    audioBackend: desktop.windows_audio_backend === 'platform_audio' || runtime.windows_audio_backend === 'platform_audio' ? 'platform_audio' : base.audioBackend,
+    asrModelDir: textOr(runtime.asr_model_dir, base.asrModelDir, 500),
+    speakerModelDir: textOr(runtime.speaker_model_dir, base.speakerModelDir, 500),
+    speakerProfileDir: textOr(runtime.speaker_profile_dir, base.speakerProfileDir, 500),
+    ttsModel: textOr(tts.TTS_MODEL ?? runtime.tts_model, base.ttsModel, 160),
+    ttsVoice: textOr(tts.TTS_VOICE ?? runtime.tts_voice, base.ttsVoice, 120),
+    ttsConfigPath: textOr(runtime.tts_config_path, base.ttsConfigPath, 500),
+    livekitUrl: textOr(runtime.livekit_url ?? runtime.device_livekit_url, base.livekitUrl, 300),
+    livekitRoom: textOr(runtime.room, base.livekitRoom, 120),
+    continuationEnabled: bool(runtime.wake_gated_continuation_enabled ?? runtime.continuation_enabled, base.continuationEnabled),
+    continuationModel: textOr(runtime.continuation_model, base.continuationModel, 160),
+    continuationUrl: textOr(runtime.continuation_url, base.continuationUrl, 300),
+    continuationTimeout: finite(runtime.continuation_timeout, base.continuationTimeout, .1, 30),
+    wakeTimeout: finite(runtime.wake_first_turn_timeout, base.wakeTimeout, 1, 60),
+    continuationTimeoutSeconds: finite(runtime.wake_continuation_timeout, base.continuationTimeoutSeconds, 1, 120),
+    clarificationTimeoutSeconds: finite(runtime.wake_clarification_timeout, base.clarificationTimeoutSeconds, 1, 60),
+    bargeInEnabled: bool(runtime.windows_barge_in_enabled, base.bargeInEnabled),
+    wakeEnabled: bool(runtime.windows_wake_enabled, base.wakeEnabled),
+    speakerVerificationEnabled: bool(runtime.speaker_verification_enabled, base.speakerVerificationEnabled),
+    runtimeRoot: textOr(paths.runtimeRoot, base.runtimeRoot, 500),
+    configPath: textOr(paths.configPath, base.configPath, 500),
+  }
+}
+
+function jsonFile(path) {
+  if (!path || !existsSync(path)) return {}
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch { return {} }
+}
+
+function envFile(path) {
+  if (!path || !existsSync(path)) return {}
+  try {
+    return Object.fromEntries(readFileSync(path, 'utf8').split(/\r?\n/).flatMap(line => {
+      const match = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+      return match ? [[match[1], match[2].replace(/^['"]|['"]$/g, '')]] : []
+    }))
+  } catch { return {} }
+}
+
+function existingRuntimeDefaults() {
+  const root = text(process.env.PHONE_AGENT_RUNTIME_ROOT, '')
+  const candidates = [
+    text(process.env.PHONE_AGENT_RUNTIME_CONFIG, ''),
+    root ? join(root, 'rebuild', 'device-smoke', 'runtime.json') : '',
+    process.platform === 'win32' ? 'D:\\phone_agent_runtime\\rebuild\\device-smoke\\runtime.json' : '',
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'PhoneAgent', 'rebuild', 'device-smoke', 'runtime.json') : '',
+  ].filter(Boolean)
+  const configPath = candidates.find(path => existsSync(path))
+  if (!configPath) return {}
+  const runtime = jsonFile(configPath)
+  const runtimeRoot = resolve(dirname(configPath), '..', '..')
+  const desktop = jsonFile(join(runtimeRoot, 'desktop-voice-gateway.json'))
+  const tts = envFile(runtime.tts_config_path)
+  return phoneAgentDefaultsFromRuntime(runtime, desktop, tts, { runtimeRoot, configPath })
 }
 
 export function normalizePhoneAgentConfig(raw = {}) {
@@ -119,7 +191,7 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
   return {
     config,
     bots: profilesOf(state).map(bot => ({ id: bot.id, name: bot.name,
-      wakeName: profileValue(bot, 'wakeName'), ttsVoice: profileValue(bot, 'ttsVoice') })),
+      wakeName: profileValue(bot, 'wakeName', bot.name), ttsVoice: profileValue(bot, 'ttsVoice', config.ttsVoice) })),
     runtime: { state: runtime.state, ...(Number.isInteger(runtime.pid) ? { pid: runtime.pid } : {}), ...(runtime.error ? { error: text(runtime.error, 300) } : {}) },
   }
 }
@@ -174,7 +246,9 @@ class RuntimeManager {
 
 export function install(rt) {
   const { state } = rt
-  state.prefs.phoneAgent = normalizePhoneAgentConfig(state.prefs.phoneAgent ?? {})
+  const desktop = process.env.DS_BOT_APP === '1' || rt.ctx.get?.('profileContext')?.name === 'desktop'
+  const imported = desktop ? existingRuntimeDefaults() : {}
+  state.prefs.phoneAgent = normalizePhoneAgentConfig({ ...imported, ...state.prefs.phoneAgent })
   const manager = new RuntimeManager(rt)
   const save = async () => { await rt.save(); return phoneAgentView(state, manager.view()) }
   const phoneAgent = () => phoneAgentView(state, manager.view())

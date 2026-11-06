@@ -1,6 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultPhoneAgentConfig, normalizePhoneAgentConfig, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView } from '../src/host/phone-agent.js'
+import { defaultPhoneAgentConfig, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView } from '../src/host/phone-agent.js'
+
+test('imports recorded Windows runtime settings into Phone Agent defaults', () => {
+  const value = phoneAgentDefaultsFromRuntime({
+    device_id: 'meizu-18x', room: 'owner-device-smoke', livekit_url: 'ws://127.0.0.1:7880',
+    asr_model_dir: 'D:/models/asr', speaker_model_dir: 'D:/models/speaker', speaker_profile_dir: 'D:/voice/profile',
+    tts_config_path: 'E:/phone_agent/.env.tts', wake_first_turn_timeout: 8, wake_continuation_timeout: 12,
+  }, {
+    device_id: 'windows-office-01', target_id: 'windows-office-01', windows_input_device_name: 'C01',
+    windows_audio_backend: 'media_devices',
+  }, { TTS_MODEL: 'qwen-audio-3.1-tts-flash', TTS_VOICE: 'longshao_v3.1' }, {
+    runtimeRoot: 'D:/phone_agent_runtime', configPath: 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json',
+  })
+  assert.equal(value.deviceId, 'windows-office-01')
+  assert.equal(value.inputDeviceName, 'C01')
+  assert.equal(value.asrModelDir, 'D:/models/asr')
+  assert.equal(value.ttsModel, 'qwen-audio-3.1-tts-flash')
+  assert.equal(value.ttsVoice, 'longshao_v3.1')
+  assert.equal(value.runtimeRoot, 'D:/phone_agent_runtime')
+  assert.equal(value.configPath, 'D:/phone_agent_runtime/rebuild/device-smoke/runtime.json')
+})
 
 test('normalizes a safe Windows-first Phone Agent configuration', () => {
   const value = normalizePhoneAgentConfig({
@@ -38,6 +58,12 @@ test('redacts credentials and runtime internals from the client view', () => {
   assert.equal(view.config.livekitSecret, undefined)
   assert.equal(view.config.runtimeRoot, 'E:/private')
   assert.deepEqual(view.bots, [{ id: 'a', name: 'Alpha', wakeName: 'alpha', ttsVoice: 'voice-a' }])
+})
+
+test('uses Bot names and the recorded global TTS voice for new Bot profiles', () => {
+  const state = { prefs: { phoneAgent: { ...defaultPhoneAgentConfig(), ttsVoice: 'longshao_v3.1' } }, bots: { a: { id: 'a', name: 'Chief' } } }
+  const view = phoneAgentView(state)
+  assert.deepEqual(view.bots, [{ id: 'a', name: 'Chief', wakeName: 'Chief', ttsVoice: 'longshao_v3.1' }])
 })
 
 test('submits an owner-verified transcript through the Bot session controller', async () => {
