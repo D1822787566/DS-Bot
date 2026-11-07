@@ -106,6 +106,36 @@ Confirmed / Implementation in progress
 5. 将迁移后的 Python runtime、LiveKit 和 TTS worker 纳入 DS Bot 插件生命周期；开发版使用仓库内路径，打包版使用 app 资源路径。
 6. 重做设置页，只展示 DS Bot 管理的设备、ASR、TTS、LiveKit、声纹和续话配置；外部路径只用于一次性迁移，不作为运行时必填项。
 
+### 10.1 唤醒后的语音输入闭环（下一开发阶段）
+
+- `[代码证据]` 当前日志已经证明 KWS 唤醒成功：`keyword_results`、`valid_hits`、`device.wake` 和 `runtime.wake` 均已产生。
+- `[代码证据]` 当前日志没有 `input.submit`、`input.accepted`、`output.started` 或 `output.segment`；唤醒后的语音段、ASR、声纹和 Bot 提交尚未接通。
+- `[候选建议]` 下面的链路作为下一阶段实现清单；它们落实第 4 节已经确认的“语音转写进入对应 Bot 会话”和“默认主人声纹校验”，不新增供应商或新的权限边界。
+
+| 顺序 | 要接的模块 | 输入 | 输出与失败行为 |
+|---|---|---|---|
+| 1 | 唤醒后语音段采集器 | `device.wake`、连续 PCM、当前 `bot_id` 和 `wake_session_id` | 打开一次有界语音段；记录开始、结束、超时和取消；不保存原始 PCM 到日志 |
+| 2 | VAD / 语音边界 | 16 kHz 单声道 PCM | 产生 `audio.segment.started` / `audio.segment.ended`；静音超时丢弃段，设备断开取消段 |
+| 3 | ASR 适配器 | 完整 `AudioSegment`、ASR model directory、Bot 唤醒词热词 | 调用迁移后的 Paraformer/FunASR 适配器，输出最终文本；模型缺失、空文本和超时都拒绝提交 |
+| 4 | 主人声纹校验 | 同一 `AudioSegment`、CAM++ model directory、主人 profile | 输出 `owner_verified`、`score`、`model_id` 和 `profile_version`；未录入、低分、超时或段 ID 不一致时 fail-closed |
+| 5 | 语音准入与连续对话 | ASR 文本、声纹结果、当前唤醒会话和 Bot context | 复用 Phone Agent 的首轮/连续对话策略；切换 Bot 或旧 generation 的迟到结果丢弃 |
+| 6 | Bridge submit | `bot_id`、最终文本、`owner_verified` speaker evidence | 发送 `input.submit`；等待 `input.accepted` / `input.rejected` / 状态结果；禁止绕过 DS Bot sessionController |
+| 7 | 现有回复回流 | `run.started`、`output.started`、`output.segment`、`output.ended` | 沿用目标 Bot 的 TTS 音色，播放 PCM；插话或 Bot 切换只停止旧播放 |
+| 8 | 可观测性 | 每一步状态和错误码 | UI 显示当前阶段和下一步；日志只记录计数、耗时、Bot/session ID、错误码，不记录 PCM、secret、原始声纹或完整转写 |
+
+#### 10.1.1 运行依赖和边界
+
+- `[候选建议]` ASR 和声纹依赖必须进入 DS Bot 自己管理的 Python runtime 环境。当前系统 Python 已有 `sherpa-onnx`，但没有 FunASR/Torch；开发版需要准备可复现的 ASR/声纹依赖环境，不能把 `E:\project_space\phone_agent` 的虚拟环境作为运行时依赖。
+- `[候选建议]` `asrModelDir`、`speakerModelDir` 和 `speakerProfileDir` 仍由 DS Bot 配置持有；模型加载失败在 `starting` 阶段转为明确 `error`，不影响文字聊天。
+- `[候选建议]` 每个语音段必须携带 `wake_session_id`、`bot_id`、`segment_id` 和 runtime generation。Bridge、ASR、声纹和 submit 只接受同一组标识。
+
+#### 10.1.2 完成条件
+
+- `[候选建议]` 说出有效唤醒词后，用户继续说一句话，日志依次出现 `audio.segment.ended`、ASR 完成、声纹完成、`input.submit`、`input.accepted` 和回复输出事件。
+- `[候选建议]` 声纹失败时出现拒绝诊断，不产生 `input.submit`。
+- `[候选建议]` ASR 或模型依赖失败时出现明确错误，不会把空文本提交给 Bot。
+- `[候选建议]` Bot 切换、Bridge 重连或 runtime 停止后，旧语音段不能提交到旧 Bot/session。
+
 ## 11. 影响范围
 
 - `ds-bot/index.js`、`src/host/channel.js`、新增 `src/host/phone-agent.js`。
@@ -129,6 +159,7 @@ Confirmed / Implementation in progress
 
 - 修改对象：仓库内 Python runtime、LiveKit/TTS worker 启停和 app 资源分发。
 - 完成条件：不依赖 `E:\\project_space\\phone_agent`；DS Bot 可启动、停止、重启并回收迁移后的本地进程；缺少模型或设备时给出明确错误。
+- 下一执行顺序：先实现 10.1 的语音段采集和 VAD，再接 ASR/声纹 provider，最后接 `input.submit` 与现有回复回流。
 
 ### 步骤 4：设置 UI
 
@@ -175,6 +206,7 @@ Confirmed / Implementation in progress
 - DS Bot：定向 Phone Agent/Bridge 测试、完整 `npm test`、`npm run build`、`npm run lint`。
 - 迁移后的 Python runtime：原有 `test_windows_*`、`test_wake_*`、`test_continuation_*`、`test_bridge_client.py` 及新增 DS Bot Bridge 集成测试。
 - Windows：由 DS Bot 启动迁移后的 runtime，验证唤醒、声纹拒绝、Bot 切换、TTS 音色、播放打断、Bridge 重连和旧 session 丢弃。
+- 下一阶段专项测试：使用固定 PCM fixture 验证 VAD 边界、ASR 文本、声纹通过/拒绝、空文本拒绝、`device.wake` 到 `input.submit` 的事件顺序，以及旧 generation 丢弃；再做真实 Windows 麦克风和主人声纹验收。
 
 ## 15. 风险与回滚方式
 
@@ -204,3 +236,4 @@ Confirmed / Implementation in progress
 - 2026-11-07：根据用户纠正，技术方案改为“迁移 Phone Agent 语音链路进 DS Bot 仓库；Python 只负责音频与语音模型；DS Bot Node Host 负责 Bot 会话和 Bridge”，并确认 runtime 目录、协议语义、一次性配置迁移和插件自动启动策略。
 - 2026-11-07：开始按确认架构实现 DS Bot Host Bridge、仓库内 Python runtime 入口、托管子进程生命周期和设置页去外部路径化；随后接入 Windows 麦克风采集、WASAPI 端点选择和 Sherpa 唤醒检测，并把运行时 stdout 诊断显示到设置页；发现英文默认 Bot 名称不在当前中文 KWS 模型词表后改为跳过不支持的名称并保留可识别 Bot，避免一个配置阻塞整个 runtime；ASR、主人声纹、唤醒后的语音段提交和端到端播放验收仍未完成。
 - 2026-11-07：补齐 `device.wake` 的 DS Bot Bridge 路由和 `windows.wake.audio` 诊断，使唤醒候选可被 Host 确认并能区分“没有音频”“没有命中”和“未完成后续 ASR”三种状态。
+- 2026-11-07：根据运行日志补充“唤醒后的语音输入闭环”清单，明确下一阶段需要接入语音段采集、VAD、Paraformer/FunASR ASR、CAM++ 声纹、语音准入、`input.submit`、回复回流和可观测性；当前仍未把这些候选步骤标记为已完成。

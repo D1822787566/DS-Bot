@@ -64,10 +64,11 @@
 - [代码证据] 上述配置导入和 launcher 修复属于被 D-PAVP-015 supersede 的过渡实现；当前不应视为语音链路迁移完成。
 - [代码证据] 新架构的服务启动策略已实现首段：DS Bot Desktop Host 创建 loopback Bridge、注入一次性 credential 并托管 `voice-runtime/main.py` 子进程；Python runtime 现在会在报告 ready 前打开配置的 Windows 麦克风，使用 WASAPI 端点选择、采样率重采样和 Sherpa 唤醒模型处理 PCM，并把 stdout 诊断显示到设置页。模型不支持的唤醒词会显示为 `windows.wake.unsupported_names`，不会阻塞同一设备上其他可识别的中文唤醒词。
 - [代码证据] Windows 源码桌面应用重启实测已看到托管 `python.exe main.py` 子进程持续运行；当前保存的 `Chief` 英文默认唤醒词被诊断为不支持，但 `华子` 等中文唤醒词仍可进入检测映射。唤醒候选现在通过认证 Bridge 的 `device.wake` 发送并由 DS Bot Host 确认，runtime 同时输出 `windows.wake.audio` 诊断；Phone Agent 设置每秒刷新运行状态和当前唤醒 Bot。
+- [代码证据] 运行日志显示唤醒链路已产生 `device.wake` / `runtime.wake`，但没有 `input.submit` 或回复输出；下一阶段需要按开发文档 10.1 接入唤醒后语音段、VAD、ASR、声纹和 Bridge submit。
 
 ## 继续入口
 
-- 当前入口：在 `ds-bot/voice-runtime/` 继续补齐唤醒后的 ASR、主人声纹、语音段提交和端到端回复播放链路。
+- 当前入口：按开发文档 10.1 在 `ds-bot/voice-runtime/` 接入唤醒后的语音段采集、VAD、ASR、主人声纹、语音段提交和端到端回复播放链路；当前仍处于未实现状态。
 - 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、运行诊断和自检面板、迁移 runtime 定向测试；已修复 runtime 将 `BridgeEvent` 错当作 roster mapping 的启动错误、Windows 重复音频设备名导致的 sounddevice 歧义错误、WASAPI 设备 48 kHz 与 TTS 16 kHz 的采样率不匹配、Bridge 空闲超时误退出、桌面打包依赖缓存旧 runtime 文件、一个不支持的英文默认唤醒词导致整个 Windows runtime 无法启动的问题，以及唤醒候选未发送到 DS Bot Bridge 的问题。
 - 需要继续：将 `VoiceRuntime` 的唤醒事件连接到 ASR、声纹和 Bridge submit，增加进程重连、打包依赖和 Windows 端到端验收；当前错误、stdout、音频帧和检测计数诊断已在设置页显示。
 - 验证入口：`node --import ./test/harness-resolve.mjs --test test/phone-agent.test.js test/voice-bridge.test.js test/plugins-client.test.js`；`python -m compileall -q voice-runtime`；`C:\Program Files\Python314\python.exe -m pytest -q ds-bot/voice-runtime`；受控 Windows 检查需看到 `windows.audio.input_ready`、`runtime.ready` 且唤醒任务持续运行。现有 launcher 过渡代码不作为完成标准。
