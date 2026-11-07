@@ -56,14 +56,22 @@ def test_playback_uses_livekit_native_track_resampling_at_the_16khz_tts_boundary
     class Player:
         def __init__(self):
             self.tracks, self.started, self.closed = [], False, False
+            self._buffer = bytearray()
 
         async def add_track(self, track):
             self.tracks.append(track)
 
         async def start(self):
             self.started = True
+            self._buffer.extend(b'queued-tail')
+            asyncio.create_task(self._drain_buffer())
+
+        async def _drain_buffer(self):
+            await asyncio.sleep(.02)
+            self._buffer.clear()
 
         async def aclose(self):
+            assert not self._buffer
             self.closed = True
 
     class MediaDevices:

@@ -75,6 +75,7 @@
 - [代码证据] 已修复 Windows 播放链路的音质失真：此前每个约 100 ms 的 TTS 小块单独从 16 kHz 插值到输出采样率，块边界会重置插值状态；现在使用 LiveKit 高质量有状态重采样器，跨 provider chunk 保持状态，停止时丢弃尾部，正常结束时先 flush 再停止设备。新增 7 个播放回归测试覆盖 16/44.1/48 kHz、不同 chunk 边界和打断；Python 测试为 `93 passed, 12 subtests passed`。
 - [代码证据] 在用户反馈重采样修复后仍然沙哑后，已将 DS Bot 默认及当前 Windows Bot 配置从 `longshao_v3.1` 切换为已验证可用的 `longanlingxi_v3.1`；`qwen-audio-3.1-tts-flash` provider 直连合成和当前 48 kHz 扬声器播放均成功，应用已按新配置重启。音色是否主观清晰仍待用户复验。
 - [代码证据] 已确认迁移差异：Phone Agent 原版使用 LiveKit `MediaDevices`/`OutputPlayer`，以 16 kHz `AudioTrack` 交给 LiveKit 的原生输出重采样；DS Bot 迁移版此前使用 `sounddevice.RawOutputStream` 接收 TTS PCM，再自行做 16→48 kHz 重采样。当前已改回 LiveKit 原生输出边界，TTS PCM 以 16 kHz `AudioSource`/`LocalAudioTrack` 输入，Windows 输出仍由 `MediaDevices` 处理。新增 native track、打断和不 drain 回归测试；Python 测试为 `88 passed, 12 subtests passed`。
+- [代码证据] 已修复完整回复末尾被截断：正常结束时 `AudioSource.wait_for_playout()` 只代表源队列完成，`OutputPlayer` 内部 `_buffer` 仍可能有最后一个设备块；此前立即 `aclose()` 会丢掉尾音。现在 drain 会等待原生输出缓冲连续为空并覆盖一个设备块时长后再关闭；打断路径仍立即丢弃队列。新增回归覆盖“有 pending native buffer 时不得提前 close”。
 
 ## 继续入口
 

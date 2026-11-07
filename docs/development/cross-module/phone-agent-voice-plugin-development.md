@@ -160,6 +160,7 @@ Confirmed / Implementation in progress
 - `[代码证据]` 已修复 Windows 播放的跨块重采样失真：TTS 的 16 kHz PCM 现在由有状态的高质量重采样器连续转换到设备采样率，再按输出设备块大小写入；正常结束会 flush，打断会丢弃重采样尾部。该修复覆盖 16 kHz、44.1 kHz、48 kHz 设备及多种 provider chunk 边界，已通过 `93 passed, 12 subtests passed` 的 Python runtime 测试。真实桌面听感仍需用户复验。
 - `[代码证据]` 用户反馈上述修复后仍然沙哑。为区分播放链路与音色本身，已将默认及当前 Bot 音色切换为已验证兼容 `qwen-audio-3.1-tts-flash` 的 `longanlingxi_v3.1`，并在当前 48 kHz Windows 输出设备上完成直连合成与播放测试；主观清晰度仍待用户复验。音色仍可通过 Bot 设置单独修改。
 - `[代码证据]` 迁移对比发现原版 Phone Agent 通过 LiveKit `MediaDevices`/`OutputPlayer` 播放 16 kHz TTS track；DS Bot 之前绕过该边界，使用 `RawOutputStream` 和自有重采样。当前已恢复 LiveKit 原生输出：`AudioSource(16000)` → `LocalAudioTrack` → `MediaDevices.open_output(48000)`，避免迁移版自行解释 PCM 播放时引入音质差异。Python runtime 当前为 `88 passed, 12 subtests passed`。
+- `[代码证据]` 已补齐正常结束的尾音收尾：`AudioSource.wait_for_playout()` 后继续等待 `OutputPlayer` 内部缓冲为空并经过一个输出 block，再关闭播放器；插话和切换仍直接停止。该修复针对“最后几个字没有说完”，避免正常完成路径误用打断式关闭。
 - `[待完成]` 仍需在 DS Bot Desktop 中启动托管 runtime，验证真实 Windows 麦克风、主人声纹、TTS 网络回复、扬声器播放、Bot 切换和重连；这些物理设备验收未由自动化测试替代。
 
 ### 10.2 开发条件核对

@@ -215,10 +215,30 @@ class WindowsPcmPlayback:
         await source.wait_for_playout()
         if self._player is not player or generation != self._generation:
             return
+        await self._wait_for_native_buffer(player)
         self._generation += 1
         self._media_devices = self._player = self._source = self._track = None
         await source.aclose()
         await player.aclose()
+
+    async def _wait_for_native_buffer(self, player):
+        """Let OutputPlayer's device callback consume its final buffered block."""
+        if not hasattr(player, "_buffer"):
+            return
+        sample_rate = max(1, int(getattr(player, "_sample_rate", self.sample_rate)))
+        blocksize = max(1, int(getattr(player, "_blocksize", sample_rate // 10)))
+        block_duration = blocksize / sample_rate
+        interval = min(.01, max(.002, block_duration / 10))
+        deadline = time.monotonic() + max(.5, block_duration * 4)
+        empty_for = 0.0
+        while time.monotonic() < deadline:
+            if len(player._buffer):
+                empty_for = 0.0
+            else:
+                empty_for += interval
+                if empty_for >= block_duration:
+                    return
+            await asyncio.sleep(interval)
 
     async def close(self):
         await self.stop()
