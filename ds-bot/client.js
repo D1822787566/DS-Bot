@@ -15330,7 +15330,20 @@ function PhoneAgentSettings({ actions }) {
     setDraft({ config: { ...next.config ?? {} }, bots: Object.fromEntries((next.bots ?? []).map((bot) => [bot.id, { wakeName: bot.wakeName ?? "", ttsVoice: bot.ttsVoice ?? "" }])) });
   };
   (0, import_react34.useEffect)(() => {
-    load().catch((failure) => setError(failure.message));
+    let active = true;
+    const refresh = () => actions.phoneAgent().then((next) => {
+      if (active) setValue(next);
+    }).catch((failure) => {
+      if (active) setError(failure.message);
+    });
+    load().catch((failure) => {
+      if (active) setError(failure.message);
+    });
+    const timer = window.setInterval(refresh, 1e3);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
   const run2 = async (task, done = "Saved") => {
     setBusy(true);

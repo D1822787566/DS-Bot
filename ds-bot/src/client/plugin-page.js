@@ -132,7 +132,13 @@ export function PhoneAgentSettings({ actions }) {
     setValue(next)
     setDraft({ config: { ...(next.config ?? {}) }, bots: Object.fromEntries((next.bots ?? []).map(bot => [bot.id, { wakeName: bot.wakeName ?? '', ttsVoice: bot.ttsVoice ?? '' }])) })
   }
-  useEffect(() => { load().catch(failure => setError(failure.message)) }, [])
+  useEffect(() => {
+    let active = true
+    const refresh = () => actions.phoneAgent().then(next => { if (active) setValue(next) }).catch(failure => { if (active) setError(failure.message) })
+    load().catch(failure => { if (active) setError(failure.message) })
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [])
   const run = async (task, done = 'Saved') => {
     setBusy(true); setError(''); setMessage('')
     try { const next = await task(); if (next?.config) { setValue(next); setDraft({ config: { ...next.config }, bots: Object.fromEntries((next.bots ?? []).map(bot => [bot.id, { wakeName: bot.wakeName ?? '', ttsVoice: bot.ttsVoice ?? '' }])) }) }; setMessage(done) }
