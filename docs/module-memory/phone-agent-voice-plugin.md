@@ -47,6 +47,7 @@
 - [用户确认] D-PAVP-016 · 2026-11-07 · Python runtime 迁入 `ds-bot/voice-runtime/`，开发版直接运行仓库内 runtime，打包版随 app 资源分发。原因：用户接受建议。影响：Phone Agent 运行时代码成为 DS Bot 仓库的一部分，不再依赖外部项目路径。
 - [用户确认] D-PAVP-017 · 2026-11-07 · 保留 `agent-events.v1` 事件语义，但 Bridge 绑定对象改为 DS Bot `bot_id` / `session_id`。原因：复用已验证的协议顺序和幂等语义，同时切断 Alife `character_id` 依赖。影响：需要实现 DS Bot Host Bridge Server、roles snapshot 和 Bot/session 路由。
 - [用户确认] D-PAVP-018 · 2026-11-07 · 外部 Phone Agent 配置只做一次性迁移，迁移后由 DS Bot 持有和管理，运行时不再依赖外部 Phone Agent 项目。原因：用户接受建议。影响：需要一次性配置迁移和 DS Bot 自有 runtime 配置持久化。
+- [用户确认] D-PAVP-019 · 2026-11-07 · 插件默认启用时由 DS Bot Host 自动启动和托管 Python voice-runtime；用户不需要独立启动服务，Python 仍作为独立子进程运行。原因：延续“插件托管运行依赖、用户不手动运行脚本”和默认启用决策，同时隔离音频/模型依赖。影响：需要定义插件启动顺序、错误隔离、重连和退出回收。
 
 ## 开发状态
 
@@ -61,9 +62,10 @@
 - [代码证据] 已修复旧版空配置覆盖导入默认值的问题：启动时会把现有 runtime、TTS 和 Windows 音频记录合并回 DS Bot 配置，并将 Phone Agent 工程根目录与 runtime 配置路径持久化；Windows launcher 启动时从本地 runtime 配置注入 Bridge 凭据到子进程环境，不返回到 UI。
 - [代码证据] Windows 源码重启实测后配置已持久化为 `E:\\project_space\\phone_agent`、`D:\\phone_agent_runtime\\rebuild\\device-smoke\\runtime.json`、`C01` 和 `扬声器 (Philips SPA5308P)`；不再回退到 `.ds-bot-local\\phone_agent`。
 - [代码证据] 上述配置导入和 launcher 修复属于被 D-PAVP-015 supersede 的过渡实现；当前不应视为语音链路迁移完成。
+- [用户确认] 新架构的服务启动策略已确定为“插件托管、自动启动、子进程隔离”；当前尚未实现迁移后的启动编排。
 
 ## 继续入口
 
 - 当前入口：按已确认的 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md) 迁移 Python 音频链路，设计 DS Bot Host Bridge 和 Bot/session 事件映射。
-- 需要先解决：可迁移 Python 模块边界、去除 AlifeVoiceAgent/Alife Core/ChannelBridge、DS Bot roles snapshot、Bot/session 路由、assistant stream 到 TTS 分段回流、运行时打包和旧配置一次性导入。
+- 需要先解决：可迁移 Python 模块边界、去除 AlifeVoiceAgent/Alife Core/ChannelBridge、DS Bot roles snapshot、Bot/session 路由、assistant stream 到 TTS 分段回流、运行时打包、自动启动顺序、错误隔离、重连和旧配置一次性导入。
 - 验证入口：按 TDD 迁移模块和协议；现有 launcher 过渡代码不作为完成标准。后续开发从 `main` 继续。

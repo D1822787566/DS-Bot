@@ -43,6 +43,7 @@ Confirmed / Implementation not started
 - Python runtime 迁入 `ds-bot/voice-runtime/`；开发版直接运行仓库内 runtime，打包版随 app 资源分发。
 - 保留 `agent-events.v1` 的事件语义；Bridge 绑定对象改为 DS Bot `bot_id` / `session_id`，不再使用 Alife `character_id`。
 - 外部 Phone Agent 配置只做一次性迁移；迁移后由 DS Bot 持有和管理，运行时不再依赖外部 Phone Agent 项目。
+- 插件默认启用时，由 DS Bot Host 自动启动和托管 Python voice-runtime；用户不需要单独打开终端或手动启动语音服务。Python 仍作为独立子进程运行，以隔离音频和模型依赖。
 
 ## 5. 待确认问题
 
@@ -54,6 +55,7 @@ Confirmed / Implementation not started
 - 在 DS Bot Host 内实现本地 Bridge Server，使用 `agent-events.v1` 语义，但将 `character_id` 替换为 DS Bot `bot_id` / `session_id`，并由 DS Bot roster 生成 roles snapshot。
 - `input.submit` 进入 DS Bot 的 `sessionController.prompt`；DS Bot 的 `session/event` 和 `agent/assistant-stream` 转换为 `output.started/segment/ended`，每段携带目标 Bot 的 TTS 音色。
 - LiveKit 保留为迁移后 Python 音频运行时的音频传输层；LiveKit server、Python runtime 和 Bridge 都由 DS Bot 插件生命周期托管。
+- 启动顺序为：DS Bot Host 加载插件 → 读取/迁移配置 → 启动本地 Bridge → 启动 Python voice-runtime → 建立 LiveKit/音频连接 → 发布 `listening`；任一步失败只让语音插件进入 `error`，不阻塞文字聊天。
 - 凭据不进入 `state.json` 或 `/api/bot` 返回值；敏感值由 DS Bot secret store 或受控子进程环境注入。
 
 ## 7. UI 与交互依据
@@ -152,6 +154,7 @@ Confirmed / Implementation not started
 
 - 设置页可完成设备、唤醒词、音色、ASR、TTS、LiveKit 和高级语义设置。
 - 启动、连接、播放、暂停、错误和未录入声纹状态可见。
+- DS Bot 启动后，在插件启用且配置有效时，用户无需手动运行脚本即可看到语音运行时进入 `listening` 或明确的 `error` 状态。
 - 冲突和无效设置在保存时给出可理解错误。
 
 ### 安全验收
