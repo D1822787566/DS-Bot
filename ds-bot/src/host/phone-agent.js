@@ -387,10 +387,14 @@ export function install(rt) {
   // the launcher never falls back to the data directory on the next start.
   rt.ctx.effect(() => {
     let stopped = false
-    void rt.load().then(() => {
-      if (stopped || !applyImportedDefaults()) return
-      return rt.save()
-    }).catch(() => {})
+    if (!desktop) return () => {}
+    queueMicrotask(() => {
+      if (stopped) return
+      void rt.load().then(() => {
+        if (stopped || !applyImportedDefaults()) return
+        return rt.save()
+      }).catch(() => {})
+    })
     return () => { stopped = true }
   }, 'ds-bot: Phone Agent runtime defaults')
   const manager = new RuntimeManager(rt)
@@ -423,11 +427,15 @@ export function install(rt) {
   const desktopRuntime = process.env.DS_BOT_APP === '1'
   rt.ctx.effect(() => {
     let stopped = false
-    void rt.load().then(async () => {
-      if (stopped || !desktopRuntime || !state.prefs.phoneAgent.enabled) return
-      const view = await manager.start(state.prefs.phoneAgent)
-      if (view.state === 'error') rt.warn('ds-bot: managed voice runtime failed to start: %s', view.error)
-    }).catch(error => rt.warn('ds-bot: managed voice runtime setup failed: %s', error))
+    if (!desktopRuntime) return () => {}
+    queueMicrotask(() => {
+      if (stopped) return
+      void rt.load().then(async () => {
+        if (stopped || !state.prefs.phoneAgent.enabled) return
+        const view = await manager.start(state.prefs.phoneAgent)
+        if (view.state === 'error') rt.warn('ds-bot: managed voice runtime failed to start: %s', view.error)
+      }).catch(error => rt.warn('ds-bot: managed voice runtime setup failed: %s', error))
+    })
     return () => { stopped = true; void manager.stop() }
   }, 'ds-bot: managed voice runtime')
 }
