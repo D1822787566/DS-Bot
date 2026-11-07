@@ -73,10 +73,12 @@
 - [现状重建] 已用真实缓存音频做模型验收：主人语音转写且声纹通过；视频和 TTS 样本声纹拒绝。尚未用真实麦克风和扬声器完成 Desktop 端到端验收。
 - [代码证据] 已在当前 Windows 设备打开并关闭配置的 `C01` 麦克风和 `扬声器 (Philips SPA5308P)`；已用私有 TTS 配置合成短 PCM 回复（3 个分片，23,040 字节）。这验证了设备打开和 provider 连接，尚未验证完整 Desktop Bridge 会话。
 - [代码证据] 已修复 Windows 播放链路的音质失真：此前每个约 100 ms 的 TTS 小块单独从 16 kHz 插值到输出采样率，块边界会重置插值状态；现在使用 LiveKit 高质量有状态重采样器，跨 provider chunk 保持状态，停止时丢弃尾部，正常结束时先 flush 再停止设备。新增 7 个播放回归测试覆盖 16/44.1/48 kHz、不同 chunk 边界和打断；Python 测试为 `93 passed, 12 subtests passed`。
+- [代码证据] 在用户反馈重采样修复后仍然沙哑后，已将 DS Bot 默认及当前 Windows Bot 配置从 `longshao_v3.1` 切换为已验证可用的 `longanlingxi_v3.1`；`qwen-audio-3.1-tts-flash` provider 直连合成和当前 48 kHz 扬声器播放均成功，应用已按新配置重启。音色是否主观清晰仍待用户复验。
 
 ## 继续入口
 
 - 当前入口：启动 DS Bot Desktop，检查 Phone Agent 状态进入 `listening`，说有效中文唤醒词后继续说需求，核对 `audio.segment.ended`、`identity.verified`、`input.submit`、`input.accepted`、`output.segment` 和扬声器输出；再验收切换 Bot、声纹拒绝、TTS 打断和 Bridge 重连。交互流程和代码链路已完成，Windows 物理设备验收仍待完成。
 - 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、运行诊断和自检面板、迁移 runtime 定向测试；已修复 runtime 将 `BridgeEvent` 错当作 roster mapping 的启动错误、Windows 重复音频设备名导致的 sounddevice 歧义错误、WASAPI 设备 48 kHz 与 TTS 16 kHz 的采样率不匹配、跨 TTS chunk 的重采样边界失真、Bridge 空闲超时误退出、桌面打包依赖缓存旧 runtime 文件、一个不支持的英文默认唤醒词导致整个 Windows runtime 无法启动的问题，以及唤醒候选未发送到 DS Bot Bridge 的问题。
+- [候选建议] 若用户确认 `longanlingxi_v3.1` 听感清晰，将其作为首版默认音色保留；`longshao_v3.1` 仍可在每个 Bot 的音色设置中手动切回。
 - 需要继续：将 `VoiceRuntime` 的唤醒事件连接到 ASR、声纹和 Bridge submit，增加进程重连、打包依赖和 Windows 端到端验收；当前错误、stdout、音频帧和检测计数诊断已在设置页显示。
 - 验证入口：`node --import ./test/harness-resolve.mjs --test test/phone-agent.test.js test/voice-bridge.test.js test/plugins-client.test.js`；`python -m compileall -q voice-runtime`；`C:\Program Files\Python314\python.exe -m pytest -q ds-bot/voice-runtime`；受控 Windows 检查需看到 `windows.audio.input_ready`、`runtime.ready` 且唤醒任务持续运行。现有 launcher 过渡代码不作为完成标准。

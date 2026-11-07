@@ -5,3 +5,4 @@ This log records verified behavior changes and their follow-up checks.
 ## Records
 
 - 2026-11-07 | fix | voice playback | per-chunk interpolation reset caused hoarse Windows TTS; stateful LiveKit resampler now spans chunks and flushes only on normal drain | `ds-bot/voice-runtime/main.py`, `test_pcm_playback.py`; 93 passed + 12 subtests, Node 1706 passed | follow-up: user listening check
+- 2026-11-07 | fix | voice default | playback repair did not resolve subjective hoarseness; switched default/current Bot voice to verified `longanlingxi_v3.1` and replayed on 48 kHz Windows output | `ds-bot/src/host/phone-agent.js`; provider and physical playback succeeded | follow-up: user listening check

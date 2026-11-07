@@ -103,7 +103,7 @@ export function defaultPhoneAgentConfig() {
     speakerModelDir: '',
     speakerProfileDir: '',
     ttsModel: 'qwen-audio-3.1-tts-flash',
-    ttsVoice: 'longshao_v3.1',
+    ttsVoice: 'longanlingxi_v3.1',
     ttsConfigPath: '',
     livekitUrl: 'ws://127.0.0.1:7880',
     livekitRoom: 'dsbot-voice',

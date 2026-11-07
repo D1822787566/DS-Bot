@@ -24,6 +24,7 @@ test('uses the bundled DS Bot voice runtime instead of the sibling Phone Agent c
 
 test('defaults the managed voice plugin to enabled and launches the bundled runtime', () => {
   assert.equal(defaultPhoneAgentConfig().enabled, true)
+  assert.equal(defaultPhoneAgentConfig().ttsVoice, 'longanlingxi_v3.1')
   const launch = voiceRuntimeLaunch({ pythonPath: 'python', runtimeRoot: 'E:/project_space/ds-bot-dfl/ds-bot/voice-runtime' })
   assert.match(launch.command, /voice-runtime-env[\\/](Scripts[\\/]python\.exe|bin[\\/]python)$/)
   assert.deepEqual(launch.args, ['-u', 'main.py'])
