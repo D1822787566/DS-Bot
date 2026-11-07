@@ -57,7 +57,11 @@ class SpeechModels:
             raise SpeechFailure('empty_transcript')
         if len(text) > 2000:
             raise SpeechFailure('transcript_too_long')
-        return text.strip(), owner
+        # Keep the ASR transcript as returned after validation. The voice
+        # path may use ``strip`` only to decide whether text is empty; it must
+        # not remove a Bot name, punctuation, or any other recognized content
+        # before submitting the turn.
+        return text, owner
 
     async def drain(self):
         if self.pending:

@@ -232,7 +232,7 @@ export class VoiceBridgeSession {
       if (!this.ownsWake(value.payload)) throw new Error('invalid_wake')
       item.dispatched = true
       await this.rt.ctx.sessionController.prompt({
-        requestId: item.requestId, sessionId: item.sessionId, mode: 'queue', content: [{ type: 'text', text: text.trim() }],
+        requestId: item.requestId, sessionId: item.sessionId, mode: 'queue', content: [{ type: 'text', text }],
       }, AbortSignal.timeout(30_000))
     } catch (error) {
       // A matching durable user/message is stronger admission evidence than an

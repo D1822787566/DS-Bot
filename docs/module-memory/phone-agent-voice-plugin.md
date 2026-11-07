@@ -50,7 +50,8 @@
 - [用户确认] D-PAVP-018 · 2026-11-07 · 外部 Phone Agent 配置只做一次性迁移，迁移后由 DS Bot 持有和管理，运行时不再依赖外部 Phone Agent 项目。原因：用户接受建议。影响：需要一次性配置迁移和 DS Bot 自有 runtime 配置持久化。
 - [用户确认] D-PAVP-019 · 2026-11-07 · 插件默认启用时由 DS Bot Host 自动启动和托管 Python voice-runtime；用户不需要独立启动服务，Python 仍作为独立子进程运行。原因：延续“插件托管运行依赖、用户不手动运行脚本”和默认启用决策，同时隔离音频/模型依赖。影响：需要定义插件启动顺序、错误隔离、重连和退出回收。
 - [用户确认] D-PAVP-020 · 2026-11-07 · 接受“唤醒后直接说需求、进入目标 Bot 原有会话、按 Bot 音色回复、短时语义续话、另一个唤醒词切换 Bot”的交互流程。来源：用户在流程说明后回复“可以的，那满足开发条件了吗”。影响：开发依据见[开发文档 7.1 和 10.1](../development/cross-module/phone-agent-voice-plugin-development.md)；首轮保留声纹校验，后续追问再做语义准入，切换只停止旧播放。
-- [用户确认] D-PAVP-021 · 2026-11-07 · 首轮提交保留完整 ASR 文本，包括用户对 Bot 的称呼；仅在整段内容只有唤醒词时不提交。原因：用户明确要求完整 ASR 进入 Bot，避免称呼清理掩盖不完整转写。影响：首轮不再删除唤醒词前缀，唤醒词单独成句仍只作为唤醒确认。
+- [用户确认] D-PAVP-021 · 2026-11-07 · 首轮提交保留完整 ASR 文本，包括用户对 Bot 的称呼；仅在整段内容只有唤醒词时不提交。状态：已被 D-PAVP-022 supersede。原因：用户随后将范围扩展到连续对话中的每次提交。
+- [用户确认] D-PAVP-022 · 2026-11-07 · 每个通过声纹和连续对话准入的语音段都把完整 ASR 文本发送给对应 Bot，包括 Bot 名称、标点和文本边界；不再按首轮/后续轮次删除称呼或其他内容。只有空转写和整段只有唤醒词时不提交。原因：用户明确要求所有轮次保留完整 ASR，避免任何内容遗漏。影响：语义连续对话模型仍决定后续语音段是否准入，但准入后的 Bridge/DS Bot prompt 使用原始 ASR 文本。
 
 ## 开发状态
 
@@ -70,15 +71,15 @@
 - [代码证据] 运行日志显示唤醒链路已产生 `device.wake` / `runtime.wake`，但没有 `input.submit` 或回复输出；下一阶段需要按开发文档 10.1 接入唤醒后语音段、VAD、ASR、声纹和 Bridge submit。
 - [用户确认] 首版语音交互流程已确认并写入开发文档；真实 Windows 设备验收仍未完成，不能据此标记插件验收通过。
 - [代码证据] DS Bot 自有 Python 3.12 环境已准备在 `.ds-bot-local/voice-runtime-env`，通过 pip check 和 FunASR/Torch/Torchaudio/LiveKit/Silero/Sherpa 导入验证；运行时不依赖外部 Phone Agent 虚拟环境。
-- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `90 passed, 12 subtests passed`。
+- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `93 passed, 12 subtests passed`。
 - [现状重建] 已用真实缓存音频做模型验收：主人语音转写且声纹通过；视频和 TTS 样本声纹拒绝。尚未用真实麦克风和扬声器完成 Desktop 端到端验收。
 - [代码证据] 已在当前 Windows 设备打开并关闭配置的 `C01` 麦克风和 `扬声器 (Philips SPA5308P)`；已用私有 TTS 配置合成短 PCM 回复（3 个分片，23,040 字节）。这验证了设备打开和 provider 连接，尚未验证完整 Desktop Bridge 会话。
 - [代码证据] 已修复 Windows 播放链路的音质失真：此前每个约 100 ms 的 TTS 小块单独从 16 kHz 插值到输出采样率，块边界会重置插值状态；现在使用 LiveKit 高质量有状态重采样器，跨 provider chunk 保持状态，停止时丢弃尾部，正常结束时先 flush 再停止设备。新增 7 个播放回归测试覆盖 16/44.1/48 kHz、不同 chunk 边界和打断；Python 测试为 `93 passed, 12 subtests passed`。
 - [代码证据] 在用户反馈重采样修复后仍然沙哑后，已将 DS Bot 默认及当前 Windows Bot 配置从 `longshao_v3.1` 切换为已验证可用的 `longanlingxi_v3.1`；`qwen-audio-3.1-tts-flash` provider 直连合成和当前 48 kHz 扬声器播放均成功，应用已按新配置重启。音色是否主观清晰仍待用户复验。
 - [代码证据] 已确认迁移差异：Phone Agent 原版使用 LiveKit `MediaDevices`/`OutputPlayer`，以 16 kHz `AudioTrack` 交给 LiveKit 的原生输出重采样；DS Bot 迁移版此前使用 `sounddevice.RawOutputStream` 接收 TTS PCM，再自行做 16→48 kHz 重采样。当前已改回 LiveKit 原生输出边界，TTS PCM 以 16 kHz `AudioSource`/`LocalAudioTrack` 输入，Windows 输出仍由 `MediaDevices` 处理。新增 native track、打断和不 drain 回归测试；Python 测试为 `88 passed, 12 subtests passed`。
 - [代码证据] 已修复完整回复末尾被截断：正常结束时 `AudioSource.wait_for_playout()` 只代表源队列完成，`OutputPlayer` 内部 `_buffer` 仍可能有最后一个设备块；此前立即 `aclose()` 会丢掉尾音。现在 drain 会等待原生输出缓冲连续为空并覆盖一个设备块时长后再关闭；打断路径仍立即丢弃队列。新增回归覆盖“有 pending native buffer 时不得提前 close”。
-- [代码证据] 已修复唤醒词与命令连续说出时的首段丢失：此前丢弃包含 KWS 命中的整个麦克风块，导致同一块中唤醒词之后的命令也被丢弃；现在把该块交给有界分段器，由首轮称呼清理逻辑去除前缀。新增回归覆盖命中块仍进入 post-wake segment。
-- [代码证据] 首轮提交现在保留完整 ASR 文本；只用规范化比较判断“整段是否只有唤醒词”，不再修改带命令的文本。新增回归覆盖“华子，检查项目”原样提交。
+- [代码证据] 已修复唤醒词与命令连续说出时的首段丢失：此前丢弃包含 KWS 命中的整个麦克风块，导致同一块中唤醒词之后的命令也被丢弃；现在把该块交给有界分段器，完整 ASR 继续进入后续准入流程。新增回归覆盖命中块仍进入 post-wake segment。
+- [代码证据] 每个通过准入的语音段现在保留完整 ASR 文本；只用规范化比较判断“整段是否只有唤醒词”，不再修改带命令的文本。ASR、连续会话、Bridge 到 DS Bot prompt 均不再裁剪文本边界。新增回归覆盖首轮和后续轮次的 Bot 名称、标点及文本边界原样提交。
 
 ## 继续入口
 

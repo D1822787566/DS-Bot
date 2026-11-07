@@ -78,6 +78,13 @@ test('routes only accepted wake input to the existing session and correlates its
   })
 })
 
+test('passes the complete voice transcript to the existing session', async () => {
+  const h = await harness()
+  await h.wake()
+  await h.submit('input-full', { text: '  华子，请继续检查项目。  ' })
+  assert.equal(h.prompts[0].content[0].text, '  华子，请继续检查项目。  ')
+})
+
 test('acknowledges input before synchronous prompt replies reach the runtime', async () => {
   const h = await harness({ prompt: (request, bridge) => {
     bridge.sessionEvent({ id: request.sessionId }, { type: 'turn/start', data: { turn: 1 } })

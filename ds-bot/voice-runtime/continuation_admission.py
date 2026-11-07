@@ -39,7 +39,7 @@ class ContinuationAdmission:
             except (ValueError, RuntimeError) as error:
                 return ContinuationActionResult(ContinuationAction.DROP, str(error))
             return ContinuationActionResult(
-                ContinuationAction.SUBMIT, "semantic_accepted", text=session.last_user_text
+                ContinuationAction.SUBMIT, "semantic_accepted", text=text
             )
         if disposition is ContinuationDisposition.REJECT:
             result = self.sessions.reject_continuation(now=now)

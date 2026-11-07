@@ -196,7 +196,7 @@ class WakeGatedAdmission:
             if session.phase is SessionPhase.FIRST_TURN_PENDING:
                 self.sessions.accept_first_turn(text, now=current_time())
                 return WakeAdmissionResult(
-                    ContinuationAction.SUBMIT, 'first_turn_admitted', text=text.strip(),
+                    ContinuationAction.SUBMIT, 'first_turn_admitted', text=text,
                     bot_id=session.bot_id, snapshot=snapshot, owner=owner,
                     segment=segment, session_id=session.session_id)
             if session.phase is not SessionPhase.CONTEXT_GATED:
@@ -240,7 +240,7 @@ class WakeGatedAdmission:
                 return self._failure('snapshot_changed', generation)
             action = self.continuation.evaluate(text, score=float(score), now=current_time())
             if action.action is ContinuationAction.CLARIFY:
-                self._pending = _PendingCandidate(text.strip(), owner, segment,
+                self._pending = _PendingCandidate(text, owner, segment,
                                                  session.bot_id, snapshot,
                                                  session.session_id, float(score))
             return WakeAdmissionResult(

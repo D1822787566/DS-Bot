@@ -24,6 +24,15 @@ def test_owner_rejection_never_returns_a_transcript():
     assert text is None and owner.identity == 'unknown'
 
 
+def test_owner_verified_recognition_preserves_the_complete_asr_transcript():
+    models = SpeechModels(
+        lambda _: '  华子，检查项目。  ',
+        lambda s: OwnerDecision('owner', .99, 'verified', s.segment_id, 'cam++', 'p'))
+    text, owner = asyncio.run(models.recognize(segment()))
+    assert text == '  华子，检查项目。  '
+    assert owner.status == 'verified'
+
+
 def test_native_timeout_cannot_launch_more_parallel_model_work_or_submit_late():
     released = threading.Event()
     calls = []

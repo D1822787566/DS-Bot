@@ -108,7 +108,7 @@ class WakeSessionManager:
 
     def accept_first_turn(self, text: str, *, now: float) -> WakeSession:
         self._require_active(SessionPhase.FIRST_TURN_PENDING, now=now)
-        text = self._required_text(text, "text")
+        text = self._required_transcript(text, "text")
         self._current = replace(
             self._current,
             phase=SessionPhase.CONTEXT_GATED,
@@ -121,7 +121,7 @@ class WakeSessionManager:
 
     def accept_continuation(self, text: str, *, now: float) -> WakeSession:
         self._require_active(SessionPhase.CONTEXT_GATED, now=now)
-        text = self._required_text(text, "text")
+        text = self._required_transcript(text, "text")
         self._current = replace(
             self._current,
             expires_at=float(now) + self.continuation_timeout,
@@ -153,7 +153,7 @@ class WakeSessionManager:
 
     def begin_clarification(self, text: str, *, now: float) -> WakeSession:
         session = self._require_active(SessionPhase.CONTEXT_GATED, now=now)
-        text = self._required_text(text, "text")
+        text = self._required_transcript(text, "text")
         self._current = replace(
             session,
             phase=SessionPhase.CLARIFICATION_PENDING,
@@ -271,7 +271,7 @@ class WakeSessionManager:
                 or len(self._inflight) >= 4):
             return False
         self._inflight[input_id] = _InflightInput(
-            text.strip(), session.turn_count,
+            text, session.turn_count,
             float(session.last_user_at if session.last_user_at is not None else session.opened_at) + 120.)
         return True
 
@@ -369,5 +369,11 @@ class WakeSessionManager:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} is required")
         return value.strip()
+
+    @staticmethod
+    def _required_transcript(value: str, name: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} is required")
+        return value
 
 

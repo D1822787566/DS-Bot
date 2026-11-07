@@ -107,6 +107,34 @@ def test_first_turn_preserves_the_wake_name_in_the_submitted_transcript():
     asyncio.run(run())
 
 
+def test_followup_preserves_the_complete_asr_transcript_including_the_wake_name():
+    async def run():
+        pipeline, bridge, clock, _ = subject({1: '华子，检查项目', 2: '华子，再具体一点'})
+        await wake(pipeline)
+        clock.now = 101.
+        await pipeline.process(audio())
+        await reply(pipeline, bridge)
+        clock.now = 102.
+        await pipeline.process(audio(2, 101.2, 102.))
+        assert [item['text'] for item in bridge.sent] == ['华子，检查项目', '华子，再具体一点']
+    asyncio.run(run())
+
+
+def test_every_submitted_turn_preserves_the_asr_text_boundaries():
+    async def run():
+        pipeline, bridge, clock, _ = subject({1: '  华子，检查项目  ', 2: '  华子，再具体一点  '})
+        await wake(pipeline)
+        clock.now = 101.
+        await pipeline.process(audio())
+        await reply(pipeline, bridge)
+        clock.now = 102.
+        await pipeline.process(audio(2, 101.2, 102.))
+        assert [item['text'] for item in bridge.sent] == [
+            '  华子，检查项目  ', '  华子，再具体一点  '
+        ]
+    asyncio.run(run())
+
+
 def test_non_owner_and_empty_transcripts_never_submit():
     async def run():
         for verified, texts in [(False, {1: '检查项目'}), (True, {1: ''})]:
