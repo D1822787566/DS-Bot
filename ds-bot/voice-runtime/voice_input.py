@@ -159,8 +159,7 @@ class VoiceInput:
                 return
             phase = self.sessions.current.phase if self.sessions.current else None
             if phase is SessionPhase.FIRST_TURN_PENDING:
-                text = self._strip_name(text, lease.names)
-                if not text:
+                if self._is_name_only(text, lease.names):
                     self._state('listening', 'awaiting_speech', 'wake_name_only')
                     return
             elif self.config.get('continuationEnabled', True) is not True:
@@ -221,12 +220,10 @@ class VoiceInput:
             self.busy = False
 
     @staticmethod
-    def _strip_name(text, names):
+    def _is_name_only(text, names):
         value = re.sub(r'^(?:喂|嘿|嗨)[，,、\s]*', '', text.strip(), count=1)
-        for name in sorted(names, key=len, reverse=True):
-            if value.startswith(name):
-                return value[len(name):].lstrip('，,。.!！?？:：、 \t')
-        return text.strip()
+        value = value.strip('，,。.!！?？:：、 \t')
+        return any(value == name for name in names)
 
     async def _snapshot(self, bot_id):
         result = await self.bridge.context_snapshot(bot_id, dialogue_active=self.sessions.awaiting_reply)

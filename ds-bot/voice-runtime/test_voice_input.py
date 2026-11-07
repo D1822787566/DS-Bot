@@ -97,6 +97,16 @@ def test_name_only_does_not_submit_and_next_utterance_needs_no_second_wake():
     asyncio.run(run())
 
 
+def test_first_turn_preserves_the_wake_name_in_the_submitted_transcript():
+    async def run():
+        pipeline, bridge, clock, _ = subject({1: '华子，检查项目'})
+        await wake(pipeline)
+        clock.now = 101.
+        await pipeline.process(audio())
+        assert [item['text'] for item in bridge.sent] == ['华子，检查项目']
+    asyncio.run(run())
+
+
 def test_non_owner_and_empty_transcripts_never_submit():
     async def run():
         for verified, texts in [(False, {1: '检查项目'}), (True, {1: ''})]:
