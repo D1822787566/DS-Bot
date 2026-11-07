@@ -1,6 +1,8 @@
 import json
+import asyncio
 
 from main import runtime_config_from_env, VoiceRuntime
+from bridge_client import BridgeEvent
 
 
 def test_runtime_reads_only_ds_bot_environment_contract():
@@ -52,3 +54,38 @@ def test_runtime_maps_output_segments_to_tts_and_playback():
         "payload": {"speak_text": "你好", "tts_voice": "voice-a"},
     })
     assert playback.chunks == ["你好".encode()]
+
+
+def test_runtime_unwraps_the_roles_snapshot_bridge_event_before_mapping():
+    class Bridge:
+        async def connect(self):
+            return None
+
+        async def subscribe_roles(self):
+            raw = {
+                "protocol": "agent-events.v1", "event_id": "roles-1",
+                "type": "roles.snapshot.result", "binding": {
+                    "device_id": "windows-1", "activity_epoch": "epoch", "channel_session_id": "session",
+                }, "sequence": 1, "correlation": {"request_id": "request-1"},
+                "payload": {"activity_epoch": "epoch", "revision": 1, "roles": [{
+                    "bot_id": "b", "session_id": "session-b", "wake_names": ["小贝"], "profile_version": 1,
+                }]}, "occurred_at": "2026-11-07T00:00:00Z",
+            }
+            return BridgeEvent.parse(raw)
+
+        async def close(self):
+            return None
+
+    class Playback:
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+        async def close(self):
+            return None
+
+    runtime = VoiceRuntime(Bridge(), object(), Playback())
+    asyncio.run(runtime.start())
+    assert runtime.mapping.roles == {"b": ("小贝",)}

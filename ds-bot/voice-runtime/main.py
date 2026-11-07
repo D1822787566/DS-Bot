@@ -99,7 +99,8 @@ class VoiceRuntime:
         if self.device is not None:
             self.device.connect()
         await self.bridge.connect()
-        self.roles = await self.bridge.subscribe_roles()
+        roles_event = await self.bridge.subscribe_roles()
+        self.roles = roles_event.payload if isinstance(roles_event, BridgeEvent) else roles_event
         self.mapping = WakeMapping.from_roster(self.roles)
         await self.playback.start()
         self.state = "listening"
