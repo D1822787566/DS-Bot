@@ -203,3 +203,4 @@ Confirmed / Implementation in progress
 - 2026-11-06：根据用户确认的 Windows-only 首版、默认声纹、Bot 唤醒词、TTS 音色和语义续话范围建立并开始实施。
 - 2026-11-07：根据用户纠正，技术方案改为“迁移 Phone Agent 语音链路进 DS Bot 仓库；Python 只负责音频与语音模型；DS Bot Node Host 负责 Bot 会话和 Bridge”，并确认 runtime 目录、协议语义、一次性配置迁移和插件自动启动策略。
 - 2026-11-07：开始按确认架构实现 DS Bot Host Bridge、仓库内 Python runtime 入口、托管子进程生命周期和设置页去外部路径化；随后接入 Windows 麦克风采集、WASAPI 端点选择和 Sherpa 唤醒检测，并把运行时 stdout 诊断显示到设置页；发现英文默认 Bot 名称不在当前中文 KWS 模型词表后改为跳过不支持的名称并保留可识别 Bot，避免一个配置阻塞整个 runtime；ASR、主人声纹、唤醒后的语音段提交和端到端播放验收仍未完成。
+- 2026-11-07：补齐 `device.wake` 的 DS Bot Bridge 路由和 `windows.wake.audio` 诊断，使唤醒候选可被 Host 确认并能区分“没有音频”“没有命中”和“未完成后续 ASR”三种状态。

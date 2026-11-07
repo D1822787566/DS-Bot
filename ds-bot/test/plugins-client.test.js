@@ -113,6 +113,13 @@ test('Phone Agent settings shows the latest runtime stdout for audio readiness',
   assert.match(document.body.textContent, /sample_rate/)
 })
 
+test('Phone Agent settings shows the Bot selected by a wake event', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [{ id: 'b', name: '华子' }], runtime: { state: 'listening', activeBotId: 'b' } }),
+  } })
+  assert.match(document.body.textContent, /Active Bot: 华子/)
+})
+
 test('the Bot extension checks presets without drawing a second market or claiming plugin ownership', async t => {
   const calls = []
   const document = await mount(t, BotPresets, { actions: {

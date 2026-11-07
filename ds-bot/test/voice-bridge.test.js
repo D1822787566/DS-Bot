@@ -111,6 +111,20 @@ test('publishes role changes to an already connected runtime session', async () 
   assert.deepEqual(sent.at(-1).payload.roles[0].wake_names, ['小贝'])
 })
 
+test('accepts an authenticated wake candidate for a mapped Bot', async () => {
+  const sent = []
+  const state = { revision: 1, bots: { b: { id: 'b', name: 'Beta', sessionId: 'session-b', phoneAgent: { wakeName: '小贝' } } } }
+  const rt = { state, botOf: id => state.bots[id], chatOf: () => 'session-b' }
+  const bridge = new VoiceBridgeSession({ rt, deviceId: 'windows-1', send: value => sent.push(value), activityEpoch: 'epoch-1', roles: () => createVoiceRoleRoster(state, 'epoch-1') })
+  await bridge.receive({ type: 'bridge.hello', payload: { channel: 'voice', target_id: 'windows-1' } })
+  const binding = sent.at(-1).binding
+  await bridge.receive({ type: 'device.wake', binding, correlation: { wake_session_id: 'wake-1' }, payload: {
+    wake_session_id: 'wake-1', bot_id: 'b', wake_mapping_version: 'epoch-1:1',
+  } })
+  assert.equal(sent.at(-1).type, 'device.wake.accepted')
+  assert.deepEqual(sent.at(-1).payload, { wake_session_id: 'wake-1', bot_id: 'b', wake_mapping_version: 'epoch-1:1' })
+})
+
 test('accepts only an authenticated loopback Bridge connection', async () => {
   const server = new VoiceBridgeServer({
     rt: { state: { revision: 1, bots: {} } }, deviceId: 'windows-1', credential: 'secret',

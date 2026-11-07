@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Mapping
 
@@ -274,10 +275,18 @@ class WindowsWakeRuntime:
                               "names": unsupported}, ensure_ascii=False), flush=True)
 
     async def run(self):
+        frames = 0
+        samples = 0
+        peak = 0
+        next_report = 0.0
         try:
             while not self._closed:
                 chunk = await self.capture.next_chunk()
                 pcm = resample_pcm16(chunk, self.capture.sample_rate, 16000)
+                values = np.frombuffer(pcm, dtype="<i2")
+                frames += 1
+                samples += len(values)
+                peak = max(peak, int(np.max(np.abs(values.astype(np.int32)), initial=0)))
                 hits = self.detector.process_pcm16(pcm)
                 for hit in hits:
                     payload = self.detector.event_for_hit(hit)
@@ -286,6 +295,14 @@ class WindowsWakeRuntime:
                         result = self.on_wake(payload)
                         if hasattr(result, "__await__"):
                             await result
+                now = time.monotonic()
+                if now >= next_report:
+                    print(json.dumps({"type": "windows.wake.audio", "frames": frames,
+                                      "samples": samples, "peak": peak,
+                                      "wake_diagnostics": self.detector.diagnostics_snapshot()},
+                                     ensure_ascii=False), flush=True)
+                    peak = 0
+                    next_report = now + 5.0
         finally:
             await self.close()
 
@@ -344,6 +361,9 @@ class VoiceRuntime:
 
     async def _on_wake(self, payload):
         self.active_bot_id = payload.get("bot_id")
+        publisher = getattr(self.bridge, "publish_wake", None)
+        if callable(publisher):
+            await publisher(payload)
         print(json.dumps({"type": "runtime.wake", "bot_id": self.active_bot_id,
                           "wake_session_id": payload.get("wake_session_id")}, ensure_ascii=False), flush=True)
 

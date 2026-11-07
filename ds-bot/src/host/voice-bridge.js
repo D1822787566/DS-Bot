@@ -57,6 +57,7 @@ export class VoiceBridgeSession {
     if (value.type === 'bridge.hello') return this.hello(value)
     this.assertBinding(value.binding)
     if (value.type === 'roles.snapshot.get') return this.roleSnapshot(value)
+    if (value.type === 'device.wake') return this.wake(value)
     if (value.type === 'context.snapshot.get') return this.contextSnapshot(value)
     if (value.type === 'input.submit') return this.submit(value)
     if (value.type === 'input.status') return this.inputStatus(value)
@@ -83,6 +84,22 @@ export class VoiceBridgeSession {
 
   rolesChanged() {
     if (this.binding !== null) this.emit('roles.changed', {}, this.roles())
+  }
+
+  wake(value) {
+    const wakeSessionId = clean(value.correlation?.wake_session_id || value.payload?.wake_session_id, 128)
+    const botId = clean(value.payload?.bot_id, 128)
+    const mappingVersion = clean(value.payload?.wake_mapping_version, 160)
+    const roster = this.roles()
+    const role = roster.roles.find(item => item.bot_id === botId)
+    if (!wakeSessionId || !botId || !mappingVersion || !role || mappingVersion !== `${roster.activity_epoch}:${roster.revision}`) {
+      this.emit('bridge.error', { wake_session_id: wakeSessionId }, { error_code: 'invalid_wake' })
+      return false
+    }
+    this.emit('device.wake.accepted', { wake_session_id: wakeSessionId }, {
+      wake_session_id: wakeSessionId, bot_id: botId, wake_mapping_version: mappingVersion,
+    })
+    return true
   }
 
   contextSnapshot(value) {

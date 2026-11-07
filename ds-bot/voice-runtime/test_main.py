@@ -257,3 +257,22 @@ def test_runtime_propagates_background_wake_failure(monkeypatch):
                            config={"windowsWakeEnabled": True})
     with pytest.raises(RuntimeError, match="wake decoder stopped"):
         asyncio.run(runtime.run())
+
+
+def test_wake_candidate_is_published_to_the_ds_bot_bridge():
+    class Bridge:
+        def __init__(self):
+            self.payload = None
+
+        async def publish_wake(self, payload):
+            self.payload = payload
+
+    bridge = Bridge()
+    runtime = VoiceRuntime(bridge, object(), object())
+    payload = {
+        "type": "device.wake", "wake_session_id": "wake-1", "bot_id": "b",
+        "wake_mapping_version": "epoch:1",
+    }
+    asyncio.run(runtime._on_wake(payload))
+    assert bridge.payload == payload
+    assert runtime.active_bot_id == "b"

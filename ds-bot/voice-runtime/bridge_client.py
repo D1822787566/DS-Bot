@@ -81,7 +81,8 @@ class BridgeClient:
         if value['type'] not in {'bridge.ready', 'bridge.error', 'input.accepted', 'input.rejected',
                                  'input.status.result', 'run.started', 'run.ended', 'output.started',
                                  'output.segment', 'output.ended', 'cancel.result',
-                                 'context.snapshot.result', 'roles.snapshot.result', 'roles.changed'}:
+                                 'context.snapshot.result', 'roles.snapshot.result', 'roles.changed',
+                                 'device.wake.accepted'}:
             raise BridgeProtocolError('invalid_state: event direction')
         if value['sequence'] != self._next_in:
             raise BridgeProtocolError('invalid_state: sequence')
@@ -204,6 +205,19 @@ class BridgeClient:
         return await self._request('input.submit', {'input_id': input_id}, payload,
                                    lambda e: e.type in ('input.accepted', 'input.rejected', 'input.status.result')
                                    and e.correlation.get('input_id') == input_id)
+
+    async def publish_wake(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('wake payload must be an object')
+        wake_session_id = payload.get('wake_session_id')
+        bot_id = payload.get('bot_id')
+        mapping_version = payload.get('wake_mapping_version')
+        if not all(isinstance(value, str) and value.strip() for value in (wake_session_id, bot_id, mapping_version)):
+            raise ValueError('invalid wake payload')
+        return await self.send('device.wake', {'wake_session_id': wake_session_id}, {
+            'wake_session_id': wake_session_id, 'bot_id': bot_id,
+            'wake_mapping_version': mapping_version,
+        })
 
     async def context_snapshot(self, bot_id, user_id='owner', *, dialogue_active=False,
                                recent_reply=None):

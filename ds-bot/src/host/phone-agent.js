@@ -18,6 +18,17 @@ export function appendPhoneAgentOutput(previous = '', chunk = '') {
   const lines = `${previous || ''}\n${String(chunk)}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   return lines.join('\n').slice(-2000)
 }
+export function phoneAgentRuntimeEvent(line = '') {
+  try {
+    const event = JSON.parse(String(line))
+    if (event?.type !== 'runtime.wake'
+        || typeof event.bot_id !== 'string' || !event.bot_id.trim()
+        || typeof event.wake_session_id !== 'string' || !event.wake_session_id.trim()) return {}
+    return { activeBotId: event.bot_id.trim().slice(0, 128), wakeSessionId: event.wake_session_id.trim().slice(0, 128) }
+  } catch {
+    return {}
+  }
+}
 const id = (value, label) => {
   const result = text(value, 96)
   if (!ID.test(result)) throw new Error(`${label} must contain only letters, digits, dots, colons, underscores or hyphens`)
@@ -307,6 +318,8 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
       ...(runtime.error ? { error: text(runtime.error, 300) } : {}),
       ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
       ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
+      ...(runtime.activeBotId ? { activeBotId: text(runtime.activeBotId, 128) } : {}),
+      ...(runtime.wakeSessionId ? { wakeSessionId: text(runtime.wakeSessionId, 128) } : {}),
     },
   }
 }
@@ -334,6 +347,8 @@ class RuntimeManager {
     this.error = ''
     this.lastError = ''
     this.lastOutput = ''
+    this.activeBotId = ''
+    this.wakeSessionId = ''
     this.activityEpoch = randomUUID()
   }
 
@@ -345,6 +360,8 @@ class RuntimeManager {
       ...(this.error ? { error: this.error } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
       ...(this.lastOutput ? { lastOutput: this.lastOutput } : {}),
+      ...(this.activeBotId ? { activeBotId: this.activeBotId } : {}),
+      ...(this.wakeSessionId ? { wakeSessionId: this.wakeSessionId } : {}),
     }
   }
 
@@ -382,6 +399,9 @@ class RuntimeManager {
       this.bridge = bridge
       this.child = child
       child.stdout?.on('data', data => {
+        for (const line of String(data).split(/\r?\n/).map(line => line.trim()).filter(Boolean)) {
+          Object.assign(this, phoneAgentRuntimeEvent(line))
+        }
         this.lastOutput = appendPhoneAgentOutput(this.lastOutput, data)
       })
       child.stderr?.on('data', data => {

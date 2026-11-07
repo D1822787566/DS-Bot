@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { appendPhoneAgentOutput, defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
+import { appendPhoneAgentOutput, defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, phoneAgentRuntimeEvent, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
 
 test('fills legacy empty Phone Agent fields from imported defaults', () => {
   const current = { ...defaultPhoneAgentConfig(), deviceId: 'windows-dsbot-01', targetId: 'windows-dsbot-01', runtimeRoot: '', configPath: '', asrModelDir: '' }
@@ -113,6 +113,13 @@ test('keeps the bounded runtime stdout history for audio readiness diagnostics',
   assert.match(value, /windows\.audio\.input_ready/)
   assert.match(value, /runtime\.ready/)
   assert.ok(value.length <= 2000)
+})
+
+test('records the Bot selected by a runtime wake event', () => {
+  assert.deepEqual(phoneAgentRuntimeEvent('{"type":"runtime.wake","bot_id":"b","wake_session_id":"wake-1"}'), {
+    activeBotId: 'b', wakeSessionId: 'wake-1',
+  })
+  assert.deepEqual(phoneAgentRuntimeEvent('{"type":"windows.wake.audio","frames":1}'), {})
 })
 
 test('self-test checks the bundled runtime boundary and current process state', () => {

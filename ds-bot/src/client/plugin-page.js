@@ -149,7 +149,7 @@ export function PhoneAgentSettings({ actions }) {
         ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent started') }, t('Start'))
         : h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStop, 'Phone Agent stopped') }, t('Stop'))),
     h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.enabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t('Enable voice plugin')),
-    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.error ? h('p', null, runtime.error) : null,
+    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.activeBotId ? h('p', null, t('Active Bot: {bot}', { bot: (value?.bots ?? []).find(bot => bot.id === runtime.activeBotId)?.name ?? runtime.activeBotId })) : null, runtime.error ? h('p', null, runtime.error) : null,
       runtime.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastError) : null,
       runtime.lastOutput ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastOutput) : null),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Runtime diagnostics')),

@@ -18,9 +18,11 @@ keyword detector. The process reports `windows.audio.input_ready` before `runtim
 microphone or wake-model failure terminates the voice runtime with diagnostics instead of
 claiming that it is listening. Wake names outside the model's Chinese pinyin vocabulary are
 reported as `windows.wake.unsupported_names` and do not prevent supported Bot wake names from
-starting. ASR, owner verification and continuation remain behind this process boundary and are
-wired in later acceptance steps. A missing provider reports a runtime error without affecting
-text chat.
+starting. Each detected candidate is sent to the DS Bot Bridge as `device.wake` and must receive
+an authenticated acceptance for the mapped Bot. The runtime also reports `windows.wake.audio`
+diagnostics with frame counts, peak level and detector counters, without including PCM. ASR,
+owner verification and continuation remain behind this process boundary and are wired in later
+acceptance steps. A missing provider reports a runtime error without affecting text chat.
 
 Install the runtime dependencies in the Python environment used by the DS Bot host:
 `requirements.txt`. No path under `E:/project_space/phone_agent` is read at runtime.

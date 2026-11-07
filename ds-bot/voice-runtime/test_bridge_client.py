@@ -61,6 +61,9 @@ class BridgeClientTests(unittest.IsolatedAsyncioTestCase):
             except websockets.ConnectionClosed:
                 return
             self.received.append(submit)
+            if submit["type"] == "device.wake":
+                await ws.wait_closed()
+                return
             await ws.send(json.dumps(envelope("input.accepted", self.binding, 1,
                                                {"input_id": submit["correlation"]["input_id"]},
                                                {"status": "queued"})))
@@ -99,6 +102,20 @@ class BridgeClientTests(unittest.IsolatedAsyncioTestCase):
                     break
                 await asyncio.sleep(.01)
             self.assertEqual(self.received[-1]['type'], 'delivery.ended')
+
+    async def test_wake_candidate_uses_the_authenticated_bridge_binding(self):
+        async with BridgeClient(self.url, "token", channel="voice", target_id="phone") as client:
+            await client.connect()
+            await client.publish_wake({
+                "wake_session_id": "wake-1", "bot_id": "bot-1",
+                "wake_mapping_version": "epoch:1",
+            })
+            for _ in range(20):
+                if len(self.received) == 2:
+                    break
+                await asyncio.sleep(.01)
+            self.assertEqual(self.received[-1]["type"], "device.wake")
+            self.assertEqual(self.received[-1]["binding"], self.binding)
 
     async def test_wrong_binding_and_unknown_identity_are_rejected_before_send(self):
         async with BridgeClient(self.url, "token", channel="voice", target_id="phone") as client:

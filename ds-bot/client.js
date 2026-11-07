@@ -46,6 +46,7 @@ var ZH = {
   "Phone Agent": "Phone Agent",
   "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
   "Runtime: {state}": "运行状态：{state}",
+  "Active Bot: {bot}": "当前 Bot：{bot}",
   "Enable voice plugin": "启用语音插件",
   "Runtime diagnostics": "运行诊断",
   "Run self-test": "运行自检",
@@ -15367,6 +15368,7 @@ function PhoneAgentSettings({ actions }) {
       "div",
       { className: "bt-plugin-report", role: "status" },
       (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })),
+      runtime.activeBotId ? (0, import_react34.createElement)("p", null, t("Active Bot: {bot}", { bot: (value?.bots ?? []).find((bot) => bot.id === runtime.activeBotId)?.name ?? runtime.activeBotId })) : null,
       runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null,
       runtime.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastError) : null,
       runtime.lastOutput ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastOutput) : null

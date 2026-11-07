@@ -11,6 +11,7 @@
       "bridge.hello", "bridge.ready", "bridge.error",
       "input.submit", "input.accepted", "input.rejected", "input.cancel", "input.status", "input.status.result",
       "roles.snapshot.get", "roles.snapshot.result", "roles.changed",
+      "device.wake", "device.wake.accepted",
       "context.snapshot.get", "context.snapshot.result",
       "run.started", "run.ended", "run.cancel",
       "output.started", "output.segment", "output.ended", "output.cancel", "cancel.result",
