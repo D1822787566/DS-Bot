@@ -144,6 +144,7 @@ class WindowsPcmPlayback:
         self.sample_rate = 16000
         self.processing = None
         self._generation = 0
+        self._resampler = None
 
     async def start(self):
         if os.name != "nt":
@@ -173,24 +174,49 @@ class WindowsPcmPlayback:
     async def play(self, chunk: bytes):
         stream, generation = self._stream, self._generation
         if stream is not None:
+            if not isinstance(chunk, bytes) or len(chunk) % 2:
+                raise ValueError("PCM16 chunk must contain complete samples")
+            if self.sample_rate != 16000 and self._resampler is None:
+                from livekit import rtc
+                # Keep the filter and fractional sample position across both
+                # provider chunks and writes. Restarting interpolation every
+                # 100 ms distorts the waveform at each block boundary.
+                self._resampler = rtc.AudioResampler(
+                    16000, self.sample_rate, quality=rtc.AudioResamplerQuality.HIGH)
             for offset in range(0, len(chunk), 3200):
                 if self._stream is not stream or generation != self._generation:
                     return
                 part = chunk[offset:offset + 3200]
                 if self.processing is not None:
                     self.processing.render(part)
-                await asyncio.to_thread(stream.write, resample_pcm16(part, 16000, self.sample_rate))
+                if self._resampler is not None:
+                    part = b''.join(bytes(frame.data) for frame in self._resampler.push(bytearray(part)))
+                await self._write(part, stream, generation)
+
+    async def _write(self, pcm, stream, generation):
+        block_bytes = max(2, self.sample_rate // 10 * 2)
+        for offset in range(0, len(pcm), block_bytes):
+            if self._stream is not stream or generation != self._generation:
+                return
+            await asyncio.to_thread(stream.write, pcm[offset:offset + block_bytes])
 
     async def stop(self):
         self._generation += 1
+        self._resampler = None  # Interrupted audio must never be flushed later.
         stream, self._stream = self._stream, None
         if stream is not None:
             await asyncio.to_thread(stream.abort)
             await asyncio.to_thread(stream.close)
 
     async def drain(self):
-        stream = self._stream
+        stream, generation = self._stream, self._generation
         if stream is not None:
+            resampler, self._resampler = self._resampler, None
+            if resampler is not None:
+                tail = b''.join(bytes(frame.data) for frame in resampler.flush())
+                await self._write(tail, stream, generation)
+            if self._stream is not stream or generation != self._generation:
+                return
             try:
                 await asyncio.to_thread(stream.stop)
             finally:
@@ -199,9 +225,7 @@ class WindowsPcmPlayback:
                 await asyncio.to_thread(stream.close)
 
     async def close(self):
-        if self._stream is not None:
-            await asyncio.to_thread(self._stream.close)
-            self._stream = None
+        await self.stop()
 
 
 class WindowsPcmCapture:

@@ -157,6 +157,7 @@ Confirmed / Implementation in progress
 - `[代码证据]` 已实现 DS Bot 自有 Python 3.12 环境准备、模型和 TTS 私有配置迁移、frozen 053 续话 provider 的 DS Bot 私有适配、Bridge wake/session/generation 隔离和 roster 变更刷新。
 - `[代码证据]` 固定 PCM、ASR/CAM++ fixture、续话服务、Bridge、环境准备和 Python runtime 测试已通过；真实模型 fixture 已验证主人语音转写/声纹通过，视频和 TTS 样本未通过主人声纹。
 - `[代码证据]` 当前 Windows 设备的配置麦克风 `C01` 和扬声器 `Philips SPA5308P` 已成功打开并关闭；私有 TTS provider 已成功合成短 PCM 流。该检查尚未替代 Desktop Bridge 端到端验收。
+- `[代码证据]` 已修复 Windows 播放的跨块重采样失真：TTS 的 16 kHz PCM 现在由有状态的高质量重采样器连续转换到设备采样率，再按输出设备块大小写入；正常结束会 flush，打断会丢弃重采样尾部。该修复覆盖 16 kHz、44.1 kHz、48 kHz 设备及多种 provider chunk 边界，已通过 `93 passed, 12 subtests passed` 的 Python runtime 测试。真实桌面听感仍需用户复验。
 - `[待完成]` 仍需在 DS Bot Desktop 中启动托管 runtime，验证真实 Windows 麦克风、主人声纹、TTS 网络回复、扬声器播放、Bot 切换和重连；这些物理设备验收未由自动化测试替代。
 
 ### 10.2 开发条件核对
