@@ -1,7 +1,7 @@
 import json
 import asyncio
 
-from main import choose_output_device, runtime_config_from_env, VoiceRuntime
+from main import choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime
 from bridge_client import BridgeEvent
 
 
@@ -99,3 +99,11 @@ def test_output_device_selection_prefers_wasapi_when_windows_names_are_duplicate
     ]
     hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WDM-KS"}, {"name": "Windows WASAPI"}]
     assert choose_output_device(devices, hostapis, "扬声器 (Philips SPA5308P)") == 18
+
+
+def test_pcm_output_is_resampled_to_the_selected_windows_device_rate():
+    source = b"\x00\x00\xff\x7f"
+    result = resample_pcm16(source, 16000, 48000)
+    assert len(result) == 12
+    assert result[:2] == b"\x00\x00"
+    assert int.from_bytes(result[-2:], "little", signed=True) == 32767

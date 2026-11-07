@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import Mapping
 
+import numpy as np
+
 from bridge_client import BridgeClient, BridgeEvent
 from wake_mapping import WakeMapping
 from windows_adapter import WindowsDeviceAdapter
@@ -79,12 +81,29 @@ def choose_output_device(devices, hostapis, configured_name: str = "", default_i
     return selected.get("index", default_index)
 
 
+def resample_pcm16(chunk: bytes, source_rate: int, target_rate: int) -> bytes:
+    if not isinstance(chunk, bytes) or len(chunk) % 2:
+        raise ValueError("PCM16 chunk must contain complete samples")
+    if source_rate <= 0 or target_rate <= 0:
+        raise ValueError("audio sample rates must be positive")
+    if source_rate == target_rate or not chunk:
+        return chunk
+    source = np.frombuffer(chunk, dtype="<i2").astype(np.float32)
+    target_length = max(1, round(len(source) * target_rate / source_rate))
+    target = np.interp(
+        np.linspace(0, len(source) - 1, target_length),
+        np.arange(len(source)), source,
+    )
+    return np.rint(np.clip(target, -32768, 32767)).astype("<i2").tobytes()
+
+
 class WindowsPcmPlayback:
     """Small playback boundary. The real output stream is opened lazily."""
 
     def __init__(self, device_name: str = ""):
         self.device_name = device_name
         self._stream = None
+        self.sample_rate = 16000
 
     async def start(self):
         if os.name != "nt":
@@ -92,14 +111,18 @@ class WindowsPcmPlayback:
         try:
             import sounddevice as sd
 
-            kwargs = {"samplerate": 16000, "channels": 1, "dtype": "int16"}
             default_index = None
             try:
                 default_index = sd.default.device[1]
             except (AttributeError, IndexError, TypeError):
                 pass
-            kwargs["device"] = choose_output_device(
-                sd.query_devices(), sd.query_hostapis(), self.device_name, default_index)
+            devices = sd.query_devices()
+            index = choose_output_device(devices, sd.query_hostapis(), self.device_name, default_index)
+            selected = next((item for item in devices if item.get("index") == index), None)
+            if selected is None and isinstance(index, int) and 0 <= index < len(devices):
+                selected = devices[index]
+            self.sample_rate = max(1, round(float((selected or {}).get("default_samplerate", 16000))))
+            kwargs = {"samplerate": self.sample_rate, "channels": 1, "dtype": "int16", "device": index}
             self._stream = sd.RawOutputStream(**kwargs)
             self._stream.start()
         except Exception as error:
@@ -107,7 +130,7 @@ class WindowsPcmPlayback:
 
     async def play(self, chunk: bytes):
         if self._stream is not None:
-            await asyncio.to_thread(self._stream.write, chunk)
+            await asyncio.to_thread(self._stream.write, resample_pcm16(chunk, 16000, self.sample_rate))
 
     async def stop(self):
         if self._stream is not None:
