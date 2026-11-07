@@ -1,6 +1,7 @@
 import json
 import asyncio
 import sys
+from types import SimpleNamespace
 import pytest
 
 import main
@@ -288,6 +289,52 @@ def test_wake_candidate_is_published_to_the_ds_bot_bridge():
     asyncio.run(runtime._on_wake(payload))
     assert bridge.payload == payload
     assert runtime.active_bot_id == "b"
+
+
+def test_wake_chunk_is_forwarded_to_post_wake_segmenter():
+    pcm = b"\x00\x01" * 160
+    received, wakes = [], []
+
+    class Capture:
+        sample_rate = 16000
+        dropped_chunks = 0
+
+        async def next_chunk(self):
+            return pcm
+
+        async def close(self):
+            return None
+
+    class Detector:
+        def process_pcm16(self, value):
+            assert value == pcm
+            return (object(),)
+
+        def event_for_hit(self, _hit):
+            return {'type': 'device.wake', 'bot_id': 'b', 'wake_session_id': 'w',
+                    'wake_mapping_version': 'epoch:1'}
+
+        def diagnostics_snapshot(self):
+            return {}
+
+        def close(self):
+            return None
+
+    async def on_wake(payload):
+        wakes.append(payload)
+        runtime._closed = True
+
+    runtime = main.WindowsWakeRuntime.__new__(main.WindowsWakeRuntime)
+    runtime.capture = Capture()
+    runtime.detector = Detector()
+    runtime._closed = False
+    runtime.processing = None
+    runtime.on_pcm = received.append
+    runtime.on_gap = None
+    runtime.on_wake = on_wake
+
+    asyncio.run(runtime.run())
+    assert wakes and received == [pcm]
 
 
 def test_managed_runtime_connects_pcm_models_bridge_and_target_voice(monkeypatch):

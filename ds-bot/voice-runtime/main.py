@@ -374,9 +374,10 @@ class WindowsWakeRuntime:
                         result = self.on_wake(payload)
                         if hasattr(result, "__await__"):
                             await result
-                # Do not feed the wake-word chunk into the command segment.
-                # The next microphone chunk begins the post-wake utterance.
-                if self.on_pcm is not None and not hits:
+                # Keep the detector chunk in the bounded command segment. A
+                # user can say the wake word and the request in one chunk;
+                # VoiceInput removes a leading wake name on the first turn.
+                if self.on_pcm is not None:
                     self.on_pcm(pcm)
                 now = time.monotonic()
                 if now >= next_report:
