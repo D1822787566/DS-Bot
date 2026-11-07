@@ -49,6 +49,18 @@ function Install-IfChanged {
     [IO.File]::WriteAllText($stamp, $Hash)
 }
 
+function Sync-LocalPackageFiles {
+    param([string]$Source, [string]$Target, $Package)
+    if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Recurse -Force }
+    [void][IO.Directory]::CreateDirectory($Target)
+    foreach ($entry in @($Package.files)) {
+        $sourcePath = Join-Path $Source $entry.path
+        $targetPath = Join-Path $Target $entry.path
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $targetPath))
+        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    }
+}
+
 $envNames = @('DS_BOT_HOME', 'DS_BOT_WORKSPACE', 'DS_BOT_SHELL_DATA', 'ELECTRON_RUN_AS_NODE')
 $savedEnv = @{}
 foreach ($name in $envNames) { $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
@@ -69,6 +81,10 @@ try {
     $appFiles += @($package.files | ForEach-Object { Join-Path $plugin $_.path })
     $appHash = Get-SourceHash $appFiles
     Install-IfChanged $appDir $appHash (Join-Path $appDir 'node_modules/electron/package.json')
+    # npm can reuse a cached file: dependency when the package version stays the
+    # same. Refresh the installed DS Bot package from the exact file list above,
+    # so the desktop Host never runs an older voice-runtime copy.
+    Sync-LocalPackageFiles $plugin (Join-Path $appDir 'node_modules/ds-bot') $package
 
     $electron = Join-Path $appDir 'node_modules/electron/dist/electron.exe'
     if (-not (Test-Path -LiteralPath $electron)) {
