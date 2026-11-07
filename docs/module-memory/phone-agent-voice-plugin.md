@@ -67,6 +67,6 @@
 ## 继续入口
 
 - 当前入口：在 `ds-bot/src/host/phone-agent.js` 接入 `VoiceBridgeServer` 和 `ds-bot/voice-runtime/main.py`，随后补齐 Windows 麦克风、唤醒、ASR、声纹和 TTS 的真实采集/播放链路。
-- 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、迁移 runtime 定向测试。
-- 需要继续：将 `VoiceRuntime` 的 Bridge 闭环连接到实际 Windows 音频输入和唤醒/ASR/声纹模型，增加进程重连、打包依赖和 Windows 验收。
+- 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、运行诊断和自检面板、迁移 runtime 定向测试。
+- 需要继续：将 `VoiceRuntime` 的 Bridge 闭环连接到实际 Windows 音频输入和唤醒/ASR/声纹模型，增加进程重连、打包依赖和 Windows 验收；当前错误输出已在设置页显示。
 - 验证入口：`node --import ./test/harness-resolve.mjs --test test/phone-agent.test.js test/voice-bridge.test.js test/plugins-client.test.js`；`python -m compileall -q voice-runtime`；`E:\project_space\phone_agent\.venv-s2s\Scripts\python.exe -m pytest -q voice-runtime`。现有 launcher 过渡代码不作为完成标准。

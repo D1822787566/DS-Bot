@@ -142,13 +142,24 @@ export function PhoneAgentSettings({ actions }) {
   if (draft === null) return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent') }, h('p', { role: 'status' }, t('Loading…')))
   const configField = (key, label, type = 'text') => h('label', { className: 'bt-phone-field' }, h('span', null, t(label)), h('input', { className: 'bt-input', type, value: draft.config[key] ?? '', onChange: event => setDraft(current => ({ ...current, config: { ...current.config, [key]: type === 'checkbox' ? event.target.checked : event.target.value } })) }))
   const runtime = value?.runtime ?? { state: 'stopped' }
+  const diagnostics = value?.diagnostics
   return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent'), 'aria-busy': busy },
     h('div', { className: 'bt-preset-heading' }, h('div', null, h('h2', null, t('Phone Agent')), h('p', null, t('Windows voice runtime for Bot wake words and speech.'))),
       runtime.state === 'stopped' || runtime.state === 'error'
         ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent started') }, t('Start'))
         : h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStop, 'Phone Agent stopped') }, t('Stop'))),
     h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.enabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t('Enable voice plugin')),
-    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.error ? h('p', null, runtime.error) : null),
+    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.error ? h('p', null, runtime.error) : null,
+      runtime.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastError) : null),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Runtime diagnostics')),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentTest, 'Self-test completed') }, t('Run self-test')),
+      diagnostics ? h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, t('Self-test')), h('strong', null, diagnostics.status === 'pass' ? t('Pass') : t('Needs attention')),
+        h('span', null, t('Bundled runtime')), h('strong', null, diagnostics.bundledRuntime ? t('Found') : t('Missing')),
+        h('span', null, t('Python command')), h('code', null, diagnostics.pythonCommand),
+        h('span', null, t('Bridge')), h('code', null, diagnostics.bridgePort ? `127.0.0.1:${diagnostics.bridgePort}` : t('Not connected')),
+        diagnostics.lastError ? h('span', null, t('Last stderr')) : null,
+        diagnostics.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, diagnostics.lastError) : null) : null),
     error ? h('div', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
     message ? h('p', { role: 'status' }, message) : null,
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Windows audio and LiveKit')),
@@ -189,5 +200,5 @@ export const PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}
 `

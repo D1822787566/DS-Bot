@@ -47,6 +47,19 @@ var ZH = {
   "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
   "Runtime: {state}": "运行状态：{state}",
   "Enable voice plugin": "启用语音插件",
+  "Runtime diagnostics": "运行诊断",
+  "Run self-test": "运行自检",
+  "Self-test completed": "自检完成",
+  "Self-test": "自检结果",
+  "Pass": "通过",
+  "Needs attention": "需要处理",
+  "Bundled runtime": "内置运行时",
+  "Found": "已找到",
+  "Missing": "缺失",
+  "Python command": "Python 命令",
+  "Bridge": "Bridge",
+  "Not connected": "未连接",
+  "Last stderr": "最近错误输出",
   "Windows audio and LiveKit": "Windows 音频与 LiveKit",
   "Save settings": "保存设置",
   "ASR and TTS": "ASR 与 TTS",
@@ -15338,6 +15351,7 @@ function PhoneAgentSettings({ actions }) {
   if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-phone-agent", "aria-label": t("Phone Agent") }, (0, import_react34.createElement)("p", { role: "status" }, t("Loading…")));
   const configField = (key, label, type = "text") => (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t(label)), (0, import_react34.createElement)("input", { className: "bt-input", type, value: draft.config[key] ?? "", onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, [key]: type === "checkbox" ? event.target.checked : event.target.value } })) }));
   const runtime = value?.runtime ?? { state: "stopped" };
+  const diagnostics = value?.diagnostics;
   return (0, import_react34.createElement)(
     "section",
     { className: "bt-phone-agent", "aria-label": t("Phone Agent"), "aria-busy": busy },
@@ -15348,7 +15362,33 @@ function PhoneAgentSettings({ actions }) {
       runtime.state === "stopped" || runtime.state === "error" ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStart, "Phone Agent started") }, t("Start")) : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStop, "Phone Agent stopped") }, t("Stop"))
     ),
     (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.enabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t("Enable voice plugin")),
-    (0, import_react34.createElement)("div", { className: "bt-plugin-report", role: "status" }, (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })), runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null),
+    (0, import_react34.createElement)(
+      "div",
+      { className: "bt-plugin-report", role: "status" },
+      (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })),
+      runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null,
+      runtime.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastError) : null
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, t("Runtime diagnostics")),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentTest, "Self-test completed") }, t("Run self-test")),
+      diagnostics ? (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-diagnostic-grid", role: "status" },
+        (0, import_react34.createElement)("span", null, t("Self-test")),
+        (0, import_react34.createElement)("strong", null, diagnostics.status === "pass" ? t("Pass") : t("Needs attention")),
+        (0, import_react34.createElement)("span", null, t("Bundled runtime")),
+        (0, import_react34.createElement)("strong", null, diagnostics.bundledRuntime ? t("Found") : t("Missing")),
+        (0, import_react34.createElement)("span", null, t("Python command")),
+        (0, import_react34.createElement)("code", null, diagnostics.pythonCommand),
+        (0, import_react34.createElement)("span", null, t("Bridge")),
+        (0, import_react34.createElement)("code", null, diagnostics.bridgePort ? `127.0.0.1:${diagnostics.bridgePort}` : t("Not connected")),
+        diagnostics.lastError ? (0, import_react34.createElement)("span", null, t("Last stderr")) : null,
+        diagnostics.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastError) : null
+      ) : null
+    ),
     error ? (0, import_react34.createElement)("div", { className: "bt-error", role: "alert" }, hostText(error)) : null,
     message ? (0, import_react34.createElement)("p", { role: "status" }, message) : null,
     (0, import_react34.createElement)(
@@ -15416,7 +15456,7 @@ var PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}
 `;
 
 // src/client/create-bot.js
@@ -22875,6 +22915,7 @@ function apply(ctx) {
   actions.phoneAgentUpdate = (body) => call("phone-agent-update", body);
   actions.phoneAgentStart = () => call("phone-agent-start");
   actions.phoneAgentStop = () => call("phone-agent-stop");
+  actions.phoneAgentTest = () => call("phone-agent-test");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);

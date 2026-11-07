@@ -116,7 +116,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'phone-agent'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'phone-agent', 'phone-agent-test'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -176,6 +176,7 @@ export function install(rt) {
       switch (endpoint) {
         case 'plugins': return ok(await rt.pluginCatalog())
         case 'phone-agent': return ok(rt.phoneAgent())
+        case 'phone-agent-test': return ok(rt.phoneAgentTest())
         case 'phone-agent-update':
           await rt.load()
           return ok(await rt.phoneAgentUpdate(body))

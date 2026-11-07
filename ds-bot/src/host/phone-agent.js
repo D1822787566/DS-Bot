@@ -252,6 +252,23 @@ export function updatePhoneAgentProfile(state, botId, patch = {}) {
   return { wakeName, ttsVoice }
 }
 
+export function phoneAgentRuntimeDiagnostics(config = defaultPhoneAgentConfig(), runtime = { state: 'stopped' }) {
+  const root = voiceRuntimeRoot()
+  const bundledRuntime = existsSync(join(root, 'main.py'))
+  const pythonCommand = text(config.pythonPath, 500) || (process.platform === 'win32' ? 'python.exe' : 'python3')
+  const processState = text(runtime.state, 32) || 'stopped'
+  const bridgePort = Number.isInteger(runtime.bridgePort) ? runtime.bridgePort : undefined
+  return {
+    status: bundledRuntime && processState !== 'error' ? 'pass' : 'error',
+    bundledRuntime,
+    pythonCommand,
+    processState,
+    ...(bridgePort === undefined ? {} : { bridgePort }),
+    ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
+    ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
+  }
+}
+
 export function phoneAgentView(state, runtime = { state: 'stopped' }) {
   const config = normalizePhoneAgentConfig(state?.prefs?.phoneAgent ?? {})
   for (const key of SECRET_KEYS) delete config[key]
@@ -262,7 +279,14 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
     config,
     bots: profilesOf(state).map(bot => ({ id: bot.id, name: bot.name,
       wakeName: profileValue(bot, 'wakeName', bot.name), ttsVoice: profileValue(bot, 'ttsVoice', config.ttsVoice) })),
-    runtime: { state: runtime.state, ...(Number.isInteger(runtime.pid) ? { pid: runtime.pid } : {}), ...(runtime.error ? { error: text(runtime.error, 300) } : {}) },
+    runtime: {
+      state: runtime.state,
+      ...(Number.isInteger(runtime.pid) ? { pid: runtime.pid } : {}),
+      ...(Number.isInteger(runtime.bridgePort) ? { bridgePort: runtime.bridgePort } : {}),
+      ...(runtime.error ? { error: text(runtime.error, 300) } : {}),
+      ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
+      ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
+    },
   }
 }
 
@@ -287,6 +311,8 @@ class RuntimeManager {
     this.bridge = null
     this.state = 'stopped'
     this.error = ''
+    this.lastError = ''
+    this.lastOutput = ''
     this.activityEpoch = randomUUID()
   }
 
@@ -296,6 +322,8 @@ class RuntimeManager {
       ...(this.child?.pid ? { pid: this.child.pid } : {}),
       ...(this.bridge?.view?.().port ? { bridgePort: this.bridge.view().port } : {}),
       ...(this.error ? { error: this.error } : {}),
+      ...(this.lastError ? { lastError: this.lastError } : {}),
+      ...(this.lastOutput ? { lastOutput: this.lastOutput } : {}),
     }
   }
 
@@ -303,6 +331,8 @@ class RuntimeManager {
     if (this.child) return this.view()
     this.state = 'starting'
     this.error = ''
+    this.lastError = ''
+    this.lastOutput = ''
     const credential = randomUUID()
     const bridge = new VoiceBridgeServer({
       rt: this.rt,
@@ -330,6 +360,13 @@ class RuntimeManager {
       const child = spawn(launch.command, launch.args, { cwd: launch.cwd, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
       this.bridge = bridge
       this.child = child
+      child.stdout?.on('data', data => {
+        const lines = String(data).split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+        if (lines.length > 0) this.lastOutput = lines.at(-1).slice(0, 2000)
+      })
+      child.stderr?.on('data', data => {
+        this.lastError = `${this.lastError}${String(data)}`.slice(-2000).trim()
+      })
       child.on('error', error => {
         this.state = 'error'
         this.error = error.message.slice(0, 300)
@@ -369,6 +406,7 @@ class RuntimeManager {
 
   sessionEvent(session, event) { this.bridge?.sessionEvent(session, event) }
   rolesChanged() { this.bridge?.rolesChanged() }
+  diagnose(config) { return phoneAgentRuntimeDiagnostics(config, this.view()) }
 }
 
 export function install(rt) {
@@ -376,6 +414,7 @@ export function install(rt) {
   const desktop = process.env.DS_BOT_APP === '1' || rt.ctx.get?.('profileContext')?.name === 'desktop'
   const imported = desktop ? existingRuntimeDefaults() : {}
   const applyImportedDefaults = () => {
+    state.prefs ??= {}
     const next = normalizePhoneAgentConfig(mergePhoneAgentDefaults(state.prefs.phoneAgent, imported))
     if (JSON.stringify(next) === JSON.stringify(state.prefs.phoneAgent)) return false
     state.prefs.phoneAgent = next
@@ -420,8 +459,9 @@ export function install(rt) {
     applyImportedDefaults(); state.prefs.phoneAgent.enabled = true; await rt.save(); await manager.start(state.prefs.phoneAgent); return phoneAgent()
   }
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
+  const phoneAgentTest = () => ({ ...phoneAgent(), diagnostics: manager.diagnose(state.prefs.phoneAgent) })
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
-  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentSubmit })
+  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.
   const desktopRuntime = process.env.DS_BOT_APP === '1'

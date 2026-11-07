@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
+import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
 
 test('fills legacy empty Phone Agent fields from imported defaults', () => {
   const current = { ...defaultPhoneAgentConfig(), deviceId: 'windows-dsbot-01', targetId: 'windows-dsbot-01', runtimeRoot: '', configPath: '', asrModelDir: '' }
@@ -90,6 +90,29 @@ test('redacts credentials and runtime internals from the client view', () => {
   assert.equal(view.config.configPath, undefined)
   assert.equal(view.config.pythonPath, undefined)
   assert.deepEqual(view.bots, [{ id: 'a', name: 'Alpha', wakeName: 'alpha', ttsVoice: 'voice-a' }])
+})
+
+test('keeps runtime diagnostics visible for the status and self-test panels', () => {
+  const state = { prefs: { phoneAgent: defaultPhoneAgentConfig() }, bots: {} }
+  const view = phoneAgentView(state, {
+    state: 'error', pid: 12, bridgePort: 4567,
+    error: 'DS Bot voice runtime exited (1)',
+    lastError: 'ModuleNotFoundError: No module named jsonschema',
+    lastOutput: '{"type":"runtime.starting"}',
+  })
+  assert.deepEqual(view.runtime, {
+    state: 'error', pid: 12, bridgePort: 4567,
+    error: 'DS Bot voice runtime exited (1)',
+    lastError: 'ModuleNotFoundError: No module named jsonschema',
+    lastOutput: '{"type":"runtime.starting"}',
+  })
+})
+
+test('self-test checks the bundled runtime boundary and current process state', () => {
+  const result = phoneAgentRuntimeDiagnostics(defaultPhoneAgentConfig(), { state: 'error', lastError: 'boom' })
+  assert.equal(result.bundledRuntime, true)
+  assert.equal(result.processState, 'error')
+  assert.equal(result.lastError, 'boom')
 })
 
 test('uses Bot names and the recorded global TTS voice for new Bot profiles', () => {

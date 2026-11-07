@@ -86,6 +86,18 @@ test('Phone Agent settings edits Bot wake names and voices through the host acti
   assert.equal(calls.at(-1).profile.ttsVoice, 'voice-a')
 })
 
+test('Phone Agent settings exposes a self-test and runtime diagnostics', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'error', error: 'runtime exited' } }),
+    phoneAgentTest: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'error', error: 'runtime exited', lastError: 'missing dependency' }, diagnostics: {
+      status: 'error', bundledRuntime: true, pythonCommand: 'python.exe', processState: 'error', lastError: 'missing dependency',
+    } }),
+  } })
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === 'Run self-test').click())
+  assert.match(document.body.textContent, /Needs attention/)
+  assert.match(document.body.textContent, /missing dependency/)
+})
+
 test('the Bot extension checks presets without drawing a second market or claiming plugin ownership', async t => {
   const calls = []
   const document = await mount(t, BotPresets, { actions: {

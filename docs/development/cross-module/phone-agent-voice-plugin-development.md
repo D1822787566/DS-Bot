@@ -63,6 +63,7 @@ Confirmed / Implementation in progress
 插件页面使用 DS Bot 已有 Plugins 页面风格，增加 Phone Agent 设置卡片：
 
 - **总览**：启用开关、运行状态、当前设备、当前 Bot、最近错误、启动/停止。
+- **诊断**：运行自检，显示内置 runtime、Python 命令、Bridge 端口、进程状态和最近 stderr/stdout；切换页面后再次进入仍从 Host 读取当前状态。
 - **Bot 与唤醒词**：逐 Bot 编辑主唤醒词、设备绑定和 TTS 音色；重复唤醒词保存时拒绝并指出冲突 Bot。
 - **Windows 音频**：输入/输出设备名称、设备扫描、连接测试。
 - **ASR / TTS / LiveKit**：显示当前 Phone Agent 后端与可编辑的已支持配置。
