@@ -9,6 +9,7 @@ const ZH = {
   'Phone Agent': 'Phone Agent',
   'Windows voice runtime for Bot wake words and speech.': '为 Bot 唤醒词和语音提供 Windows 语音运行时。',
   'Runtime: {state}': '运行状态：{state}',
+  'Enable voice plugin': '启用语音插件',
   'Windows audio and LiveKit': 'Windows 音频与 LiveKit',
   'Save settings': '保存设置',
   'ASR and TTS': 'ASR 与 TTS',

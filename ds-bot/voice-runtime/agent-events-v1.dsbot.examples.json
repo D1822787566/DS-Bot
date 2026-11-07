@@ -1,0 +1,32 @@
+{
+  "valid": [
+    {
+      "name": "bridge-ready",
+      "event": {
+        "protocol": "agent-events.v1",
+        "event_id": "event-ready",
+        "type": "bridge.ready",
+        "binding": {"device_id": "windows-1", "activity_epoch": "epoch", "channel_session_id": "session"},
+        "sequence": 0,
+        "correlation": {},
+        "payload": {"runtime": "ds-bot-voice-runtime"},
+        "occurred_at": "2026-11-07T00:00:00Z"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "character-binding-is-not-allowed",
+      "event": {
+        "protocol": "agent-events.v1",
+        "event_id": "event-invalid",
+        "type": "bridge.ready",
+        "binding": {"character_id": "owner", "activity_epoch": "epoch", "channel_session_id": "session"},
+        "sequence": 0,
+        "correlation": {},
+        "payload": {},
+        "occurred_at": "2026-11-07T00:00:00Z"
+      }
+    }
+  ]
+}

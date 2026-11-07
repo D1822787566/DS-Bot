@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DS Bot agent-events.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "event_id", "type", "binding", "sequence", "correlation", "payload", "occurred_at"],
+  "properties": {
+    "protocol": {"const": "agent-events.v1"},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "type": {"enum": [
+      "bridge.hello", "bridge.ready", "bridge.error",
+      "input.submit", "input.accepted", "input.rejected", "input.cancel", "input.status", "input.status.result",
+      "roles.snapshot.get", "roles.snapshot.result", "roles.changed",
+      "context.snapshot.get", "context.snapshot.result",
+      "run.started", "run.ended", "run.cancel",
+      "output.started", "output.segment", "output.ended", "output.cancel", "cancel.result",
+      "delivery.progress", "delivery.ended"
+    ]},
+    "binding": {"anyOf": [
+      {"type": "object", "required": ["device_id", "activity_epoch", "channel_session_id"], "properties": {
+        "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "activity_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "channel_session_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }, "additionalProperties": false},
+      {"type": "null"}
+    ]},
+    "sequence": {"type": "integer", "minimum": 0},
+    "correlation": {"type": "object"},
+    "payload": {"type": "object"},
+    "occurred_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -34,6 +34,7 @@
     "src/host/",
     "src/shared/",
     "src/office/",
+    "voice-runtime/",
     "client.js",
     "office.js",
     "web-search.js",
@@ -68,6 +69,7 @@
     "esbuild": "0.28.2"
   },
   "dependencies": {
-    "deep-view": "0.1.0"
+    "deep-view": "0.1.0",
+    "ws": "^8.18.3"
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView } from '../src/host/phone-agent.js'
+import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
 
 test('fills legacy empty Phone Agent fields from imported defaults', () => {
   const current = { ...defaultPhoneAgentConfig(), deviceId: 'windows-dsbot-01', targetId: 'windows-dsbot-01', runtimeRoot: '', configPath: '', asrModelDir: '' }
@@ -12,15 +12,23 @@ test('fills legacy empty Phone Agent fields from imported defaults', () => {
   assert.equal(value.asrModelDir, 'D:/models/asr')
 })
 
-test('finds the sibling Phone Agent project in this source checkout', () => {
-  assert.equal(phoneAgentProjectRoot(), 'E:\\project_space\\phone_agent')
+test('uses the bundled DS Bot voice runtime instead of the sibling Phone Agent checkout', () => {
+  assert.match(phoneAgentProjectRoot(), /ds-bot[\\/]voice-runtime$/)
+})
+
+test('defaults the managed voice plugin to enabled and launches the bundled runtime', () => {
+  assert.equal(defaultPhoneAgentConfig().enabled, true)
+  const launch = voiceRuntimeLaunch({ pythonPath: 'python', runtimeRoot: 'E:/project_space/ds-bot-dfl/ds-bot/voice-runtime' })
+  assert.equal(launch.command, 'python')
+  assert.deepEqual(launch.args, ['main.py'])
+  assert.match(launch.cwd, /ds-bot[\\/]voice-runtime$/)
 })
 
 test('passes local Bridge credentials to the Windows launcher without exposing them in the view', () => {
   const env = phoneAgentEnvironmentFromRuntime({ bridge_credential: 'bridge-secret' }, { EXISTING: 'keep' })
   assert.equal(env.EXISTING, 'keep')
-  assert.equal(env.CHANNEL_BRIDGE_VOICE_CREDENTIAL, 'bridge-secret')
-  assert.equal(env.CHANNEL_BRIDGE_TEXT_CREDENTIAL, 'bridge-secret')
+  assert.equal(env.DS_BOT_BRIDGE_CREDENTIAL, 'bridge-secret')
+  assert.equal(env.CHANNEL_BRIDGE_VOICE_CREDENTIAL, undefined)
 })
 
 test('imports recorded Windows runtime settings into Phone Agent defaults', () => {
@@ -78,7 +86,9 @@ test('redacts credentials and runtime internals from the client view', () => {
   const view = phoneAgentView(state, { state: 'ready', pid: 12 })
   assert.equal(view.config.bridgeCredential, undefined)
   assert.equal(view.config.livekitSecret, undefined)
-  assert.equal(view.config.runtimeRoot, 'E:/private')
+  assert.equal(view.config.runtimeRoot, undefined)
+  assert.equal(view.config.configPath, undefined)
+  assert.equal(view.config.pythonPath, undefined)
   assert.deepEqual(view.bots, [{ id: 'a', name: 'Alpha', wakeName: 'alpha', ttsVoice: 'voice-a' }])
 })
 

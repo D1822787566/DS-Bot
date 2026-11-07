@@ -147,6 +147,7 @@ export function PhoneAgentSettings({ actions }) {
       runtime.state === 'stopped' || runtime.state === 'error'
         ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent started') }, t('Start'))
         : h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStop, 'Phone Agent stopped') }, t('Stop'))),
+    h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.enabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t('Enable voice plugin')),
     h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.error ? h('p', null, runtime.error) : null),
     error ? h('div', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
     message ? h('p', { role: 'status' }, message) : null,
@@ -161,7 +162,7 @@ export function PhoneAgentSettings({ actions }) {
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save ASR/TTS'))),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Advanced continuation')),
       h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.continuationEnabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t('Enable semantic continuation')),
-      configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'), configField('runtimeRoot', 'Phone Agent runtime folder'), configField('configPath', 'Phone Agent runtime config'),
+      configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save advanced settings'))),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Bots, wake words and voices')),
       (value?.bots ?? []).map(bot => {

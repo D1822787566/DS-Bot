@@ -46,6 +46,7 @@ var ZH = {
   "Phone Agent": "Phone Agent",
   "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
   "Runtime: {state}": "运行状态：{state}",
+  "Enable voice plugin": "启用语音插件",
   "Windows audio and LiveKit": "Windows 音频与 LiveKit",
   "Save settings": "保存设置",
   "ASR and TTS": "ASR 与 TTS",
@@ -15346,6 +15347,7 @@ function PhoneAgentSettings({ actions }) {
       (0, import_react34.createElement)("div", null, (0, import_react34.createElement)("h2", null, t("Phone Agent")), (0, import_react34.createElement)("p", null, t("Windows voice runtime for Bot wake words and speech."))),
       runtime.state === "stopped" || runtime.state === "error" ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStart, "Phone Agent started") }, t("Start")) : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStop, "Phone Agent stopped") }, t("Stop"))
     ),
+    (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.enabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t("Enable voice plugin")),
     (0, import_react34.createElement)("div", { className: "bt-plugin-report", role: "status" }, (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })), runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null),
     error ? (0, import_react34.createElement)("div", { className: "bt-error", role: "alert" }, hostText(error)) : null,
     message ? (0, import_react34.createElement)("p", { role: "status" }, message) : null,
@@ -15380,8 +15382,6 @@ function PhoneAgentSettings({ actions }) {
       (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.continuationEnabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t("Enable semantic continuation")),
       configField("continuationModel", "Continuation model"),
       configField("continuationUrl", "Continuation local URL"),
-      configField("runtimeRoot", "Phone Agent runtime folder"),
-      configField("configPath", "Phone Agent runtime config"),
       (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentUpdate({ config: draft.config }), "Settings saved") }, t("Save advanced settings"))
     ),
     (0, import_react34.createElement)(

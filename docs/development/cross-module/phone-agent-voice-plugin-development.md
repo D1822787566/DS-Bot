@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-Confirmed / Implementation not started
+Confirmed / Implementation in progress
 
 ## 1. 目标与使用场景
 
@@ -195,9 +195,10 @@ Confirmed / Implementation not started
 
 ## 18. 关联的 module-evolution 决策
 
-见 `docs/module-memory/phone-agent-voice-plugin.md`：D-PAVP-001 至 D-PAVP-013；迁移架构决策待本 Draft 确认后写入。
+见 `docs/module-memory/phone-agent-voice-plugin.md`：D-PAVP-001 至 D-PAVP-019。
 
 ## 19. 变更记录
 
 - 2026-11-06：根据用户确认的 Windows-only 首版、默认声纹、Bot 唤醒词、TTS 音色和语义续话范围建立并开始实施。
-- 2026-11-07：根据用户纠正，技术方案改为“迁移 Phone Agent 语音链路进 DS Bot 仓库；Python 只负责音频与语音模型；DS Bot Node Host 负责 Bot 会话和 Bridge”，文档退回 Draft，等待完整确认。
+- 2026-11-07：根据用户纠正，技术方案改为“迁移 Phone Agent 语音链路进 DS Bot 仓库；Python 只负责音频与语音模型；DS Bot Node Host 负责 Bot 会话和 Bridge”，并确认 runtime 目录、协议语义、一次性配置迁移和插件自动启动策略。
+- 2026-11-07：开始按确认架构实现 DS Bot Host Bridge、仓库内 Python runtime 入口、托管子进程生命周期和设置页去外部路径化；Windows 真实麦克风、唤醒、ASR 和端到端播放验收仍未完成。

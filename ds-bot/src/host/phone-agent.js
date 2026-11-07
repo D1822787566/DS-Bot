@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { VoiceBridgeServer, createVoiceRoleRoster } from './voice-bridge.js'
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/
 const validName = value => typeof value === 'string' && value.length >= 1 && value.length <= 120
@@ -21,7 +22,7 @@ const id = (value, label) => {
 
 export function defaultPhoneAgentConfig() {
   return {
-    enabled: false,
+    enabled: true,
     deviceId: 'windows-dsbot-01',
     targetId: 'windows-dsbot-01',
     inputDeviceName: '',
@@ -73,25 +74,26 @@ export function mergePhoneAgentDefaults(current = {}, imported = {}) {
 }
 
 export function phoneAgentProjectRoot() {
-  const configured = text(process.env.PHONE_AGENT_ROOT, '')
-  if (configured && existsSync(join(configured, 'scripts', 'run-desktop.ps1'))) return resolve(configured)
-  let current = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-  for (;;) {
-    const candidate = join(current, 'phone_agent')
-    if (existsSync(join(candidate, 'scripts', 'run-desktop.ps1'))) return candidate
-    const parent = dirname(current)
-    if (parent === current) return ''
-    current = parent
-  }
+  return voiceRuntimeRoot()
+}
+
+export function voiceRuntimeRoot() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'voice-runtime')
+}
+
+export function voiceRuntimeLaunch(config = {}) {
+  const command = text(config.pythonPath, 500) || (process.platform === 'win32' ? 'python.exe' : 'python3')
+  return { command, args: ['main.py'], cwd: voiceRuntimeRoot() }
 }
 
 export function phoneAgentEnvironmentFromRuntime(runtime = {}, environment = {}) {
   const next = { ...environment }
   const credential = text(runtime.bridge_credential, 500)
   if (credential) {
-    next.CHANNEL_BRIDGE_VOICE_CREDENTIAL ??= credential
-    next.CHANNEL_BRIDGE_TEXT_CREDENTIAL ??= credential
+    next.DS_BOT_BRIDGE_CREDENTIAL ??= credential
   }
+  const bridgeUrl = text(runtime.bridge_url, 500)
+  if (bridgeUrl) next.DS_BOT_BRIDGE_URL ??= bridgeUrl
   return next
 }
 
@@ -253,6 +255,9 @@ export function updatePhoneAgentProfile(state, botId, patch = {}) {
 export function phoneAgentView(state, runtime = { state: 'stopped' }) {
   const config = normalizePhoneAgentConfig(state?.prefs?.phoneAgent ?? {})
   for (const key of SECRET_KEYS) delete config[key]
+  delete config.runtimeRoot
+  delete config.pythonPath
+  delete config.configPath
   return {
     config,
     bots: profilesOf(state).map(bot => ({ id: bot.id, name: bot.name,
@@ -276,28 +281,79 @@ export async function submitPhoneAgentInput(rt, { botId, text: rawText, speaker 
 }
 
 class RuntimeManager {
-  constructor(rt) { this.rt = rt; this.child = null; this.state = 'stopped'; this.error = '' }
+  constructor(rt) {
+    this.rt = rt
+    this.child = null
+    this.bridge = null
+    this.state = 'stopped'
+    this.error = ''
+    this.activityEpoch = randomUUID()
+  }
 
-  view() { return { state: this.state, ...(this.child?.pid ? { pid: this.child.pid } : {}), ...(this.error ? { error: this.error } : {}) } }
+  view() {
+    return {
+      state: this.state,
+      ...(this.child?.pid ? { pid: this.child.pid } : {}),
+      ...(this.bridge?.view?.().port ? { bridgePort: this.bridge.view().port } : {}),
+      ...(this.error ? { error: this.error } : {}),
+    }
+  }
 
   async start(config) {
     if (this.child) return this.view()
-    const root = resolve(config.runtimeRoot || process.env.PHONE_AGENT_ROOT || phoneAgentProjectRoot() || join(this.rt.dshHome, '..', 'phone_agent'))
-    const script = join(root, 'scripts', 'run-desktop.ps1')
-    if (!existsSync(script)) throw new Error(`Phone Agent Windows launcher was not found: ${script}`)
-    const shell = process.env.ComSpec || 'powershell.exe'
-    const args = shell.toLowerCase().endsWith('cmd.exe')
-      ? ['/d', '/s', '/c', 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
-      : ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
-    this.state = 'starting'; this.error = ''
-    const environment = phoneAgentEnvironmentFromRuntime(jsonFile(config.configPath), process.env)
-    if (config.configPath) environment.PHONE_AGENT_RUNTIME_CONFIG = config.configPath
-    const child = spawn(shell, args, { cwd: root, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
-    this.child = child
-    child.on('error', error => { this.state = 'error'; this.error = error.message.slice(0, 300); this.child = null })
-    child.on('exit', (code, signal) => { if (this.child === child) this.child = null; if (this.state !== 'stopped') { this.state = code === 0 ? 'stopped' : 'error'; this.error = code === 0 ? '' : `Phone Agent exited (${code ?? signal ?? 'unknown'})` } })
-    this.state = 'ready'
-    return this.view()
+    this.state = 'starting'
+    this.error = ''
+    const credential = randomUUID()
+    const bridge = new VoiceBridgeServer({
+      rt: this.rt,
+      deviceId: config.deviceId,
+      credential,
+      activityEpoch: this.activityEpoch,
+      getRoles: () => createVoiceRoleRoster(this.rt.state, this.activityEpoch, botId => this.rt.chatOf(botId)),
+    })
+    try {
+      const bridgeView = await bridge.start({ host: '127.0.0.1', port: 0 })
+      const launch = voiceRuntimeLaunch(config)
+      const environment = {
+        ...process.env,
+        DS_BOT_BRIDGE_URL: `ws://127.0.0.1:${bridgeView.port}`,
+        DS_BOT_BRIDGE_CREDENTIAL: credential,
+        DS_BOT_DEVICE_ID: config.deviceId,
+        DS_BOT_TARGET_ID: config.targetId,
+        DS_BOT_VOICE_CONFIG: JSON.stringify({
+          ...config,
+          runtimeRoot: undefined,
+          pythonPath: undefined,
+          configPath: undefined,
+        }),
+      }
+      const child = spawn(launch.command, launch.args, { cwd: launch.cwd, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
+      this.bridge = bridge
+      this.child = child
+      child.on('error', error => {
+        this.state = 'error'
+        this.error = error.message.slice(0, 300)
+        this.child = null
+        void this.bridge?.stop()
+        this.bridge = null
+      })
+      child.on('exit', (code, signal) => {
+        if (this.child === child) this.child = null
+        if (this.state !== 'stopped') {
+          this.state = code === 0 ? 'stopped' : 'error'
+          this.error = code === 0 ? '' : `DS Bot voice runtime exited (${code ?? signal ?? 'unknown'})`
+          void this.bridge?.stop()
+          this.bridge = null
+        }
+      })
+      this.state = 'ready'
+      return this.view()
+    } catch (error) {
+      await bridge.stop().catch(() => {})
+      this.state = 'error'
+      this.error = error?.message?.slice(0, 300) || String(error).slice(0, 300)
+      return this.view()
+    }
   }
 
   async stop() {
@@ -305,8 +361,14 @@ class RuntimeManager {
     this.state = 'stopped'; this.error = ''
     this.child = null
     if (child && !child.killed) child.kill()
+    const bridge = this.bridge
+    this.bridge = null
+    await bridge?.stop?.()
     return this.view()
   }
+
+  sessionEvent(session, event) { this.bridge?.sessionEvent(session, event) }
+  rolesChanged() { this.bridge?.rolesChanged() }
 }
 
 export function install(rt) {
@@ -332,16 +394,40 @@ export function install(rt) {
     return () => { stopped = true }
   }, 'ds-bot: Phone Agent runtime defaults')
   const manager = new RuntimeManager(rt)
+  rt.ctx.on('session/event', (session, event) => manager.sessionEvent(session, event))
   const save = async () => { applyImportedDefaults(); await rt.save(); return phoneAgentView(state, manager.view()) }
   const phoneAgent = () => { applyImportedDefaults(); return phoneAgentView(state, manager.view()) }
   const phoneAgentUpdate = async body => {
     applyImportedDefaults()
+    const wasRunning = Boolean(manager.child)
     if (body?.config !== undefined) state.prefs.phoneAgent = normalizePhoneAgentConfig({ ...state.prefs.phoneAgent, ...body.config })
     if (body?.botId !== undefined) updatePhoneAgentProfile(state, String(body.botId), body.profile ?? {})
-    return save()
+    await save()
+    manager.rolesChanged()
+    if (!state.prefs.phoneAgent.enabled) await manager.stop()
+    else if (wasRunning) {
+      await manager.stop()
+      await manager.start(state.prefs.phoneAgent)
+    }
+    return phoneAgent()
   }
-  const phoneAgentStart = async () => { applyImportedDefaults(); state.prefs.phoneAgent.enabled = true; await rt.save(); await manager.start(state.prefs.phoneAgent); return phoneAgent() }
+  const phoneAgentStart = async () => {
+    if (process.env.DS_BOT_APP !== '1') throw new Error('Managed Windows voice runtime is available in the DS Bot Desktop app')
+    applyImportedDefaults(); state.prefs.phoneAgent.enabled = true; await rt.save(); await manager.start(state.prefs.phoneAgent); return phoneAgent()
+  }
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
   Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentSubmit })
+  // Only the packaged Desktop host owns local Windows processes. Web hosts may
+  // load the plugin and display its settings, but must never spawn audio.
+  const desktopRuntime = process.env.DS_BOT_APP === '1'
+  rt.ctx.effect(() => {
+    let stopped = false
+    void rt.load().then(async () => {
+      if (stopped || !desktopRuntime || !state.prefs.phoneAgent.enabled) return
+      const view = await manager.start(state.prefs.phoneAgent)
+      if (view.state === 'error') rt.warn('ds-bot: managed voice runtime failed to start: %s', view.error)
+    }).catch(error => rt.warn('ds-bot: managed voice runtime setup failed: %s', error))
+    return () => { stopped = true; void manager.stop() }
+  }, 'ds-bot: managed voice runtime')
 }

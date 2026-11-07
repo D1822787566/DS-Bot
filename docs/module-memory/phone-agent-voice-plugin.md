@@ -21,7 +21,7 @@
 
 ## 规划基线
 
-- [用户确认] P1 迁移 Phone Agent Python 音频链路到 DS Bot 仓库，DS Bot Node Host 负责 Bridge、Bot/session 和回复回流；状态：未开始。旧的“复用外部 Voice Gateway/ChannelBridge”基线已由 D-PAVP-015 supersede。开发基线见 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md)。
+- [用户确认] P1 迁移 Phone Agent Python 音频链路到 DS Bot 仓库，DS Bot Node Host 负责 Bridge、Bot/session 和回复回流；状态：进行中。旧的“复用外部 Voice Gateway/ChannelBridge”基线已由 D-PAVP-015 supersede。开发基线见 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md)。
 - [用户确认] P2 实现设备端唤醒词到 Bot 的映射、切换和旧会话取消；状态：进行中。
 - [用户确认] P3 实现单设备多 Bot 绑定、唤醒词编辑和冲突校验；状态：进行中。
 - [用户确认] P4 实现语音输入、Bot 回复、TTS 播放、暂停、停止和重连状态；状态：进行中。
@@ -54,7 +54,7 @@
 - [代码证据] Phone Agent 已有角色唤醒映射、激活角色更新、会话绑定、切换取消和设备状态链路，可作为插件侧的复用基础。
 - [代码证据] DS Bot 已有插件安装/检查、Voice Input、Voice Mode 和 Bot 预设绑定入口。
 - [代码证据] 已建立首版开发文档；DS Bot 配置模型、脱敏状态、设置 UI、语音输入提交入口和 Windows launcher 编排骨架已实现；完整 Phone Agent Bridge、回复音频回流和真实 Windows 验收仍未完成。
-- [代码证据] 首版基础实现已合并到 `main` 并推送远程，合并提交为 `45e911a`；工作区当前使用 `main`，实现剩余范围仍未完成。
+- [代码证据] 首版基础实现已合并到 `main` 并推送远程，合并提交为 `45e911a`；当前工作区继续在 `main` 上实现迁移后的 Bridge 和 runtime，完整 Windows 链路仍未完成。
 - [代码证据] 已在 `b19c471` 修正桌面 Host 的插件能力判断，并重新生成客户端包；当前启动窗口仍出现团队界面超时，Phone Agent 标签尚未完成运行中界面验收。
 - [代码证据] 已在当前修复中让桌面启动握手在团队侧边栏首次挂载时立即调用 `dsBotApp.ready()`，不再等待首个 `state` 请求完成；新增回归测试覆盖空 roster 与 Agent 模式，客户端包已重新生成。
 - [代码证据] Windows 源码启动实测已在引擎启动后约 1.2 秒完成团队界面 hand-off；日志未再出现 20 秒 `ready()` 超时，团队界面可见。
@@ -62,10 +62,11 @@
 - [代码证据] 已修复旧版空配置覆盖导入默认值的问题：启动时会把现有 runtime、TTS 和 Windows 音频记录合并回 DS Bot 配置，并将 Phone Agent 工程根目录与 runtime 配置路径持久化；Windows launcher 启动时从本地 runtime 配置注入 Bridge 凭据到子进程环境，不返回到 UI。
 - [代码证据] Windows 源码重启实测后配置已持久化为 `E:\\project_space\\phone_agent`、`D:\\phone_agent_runtime\\rebuild\\device-smoke\\runtime.json`、`C01` 和 `扬声器 (Philips SPA5308P)`；不再回退到 `.ds-bot-local\\phone_agent`。
 - [代码证据] 上述配置导入和 launcher 修复属于被 D-PAVP-015 supersede 的过渡实现；当前不应视为语音链路迁移完成。
-- [用户确认] 新架构的服务启动策略已确定为“插件托管、自动启动、子进程隔离”；当前尚未实现迁移后的启动编排。
+- [代码证据] 新架构的服务启动策略已实现首段：DS Bot Desktop Host 创建 loopback Bridge、注入一次性 credential 并托管 `voice-runtime/main.py` 子进程；实际 Windows 音频模型链路仍未接入完成。
 
 ## 继续入口
 
-- 当前入口：按已确认的 [Phone Agent 语音插件开发文档](../development/cross-module/phone-agent-voice-plugin-development.md) 迁移 Python 音频链路，设计 DS Bot Host Bridge 和 Bot/session 事件映射。
-- 需要先解决：可迁移 Python 模块边界、去除 AlifeVoiceAgent/Alife Core/ChannelBridge、DS Bot roles snapshot、Bot/session 路由、assistant stream 到 TTS 分段回流、运行时打包、自动启动顺序、错误隔离、重连和旧配置一次性导入。
-- 验证入口：按 TDD 迁移模块和协议；现有 launcher 过渡代码不作为完成标准。后续开发从 `main` 继续。
+- 当前入口：在 `ds-bot/src/host/phone-agent.js` 接入 `VoiceBridgeServer` 和 `ds-bot/voice-runtime/main.py`，随后补齐 Windows 麦克风、唤醒、ASR、声纹和 TTS 的真实采集/播放链路。
+- 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、迁移 runtime 定向测试。
+- 需要继续：将 `VoiceRuntime` 的 Bridge 闭环连接到实际 Windows 音频输入和唤醒/ASR/声纹模型，增加进程重连、打包依赖和 Windows 验收。
+- 验证入口：`node --import ./test/harness-resolve.mjs --test test/phone-agent.test.js test/voice-bridge.test.js test/plugins-client.test.js`；`python -m compileall -q voice-runtime`；`E:\project_space\phone_agent\.venv-s2s\Scripts\python.exe -m pytest -q voice-runtime`。现有 launcher 过渡代码不作为完成标准。

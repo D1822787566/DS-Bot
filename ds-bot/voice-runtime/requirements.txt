@@ -1,0 +1,4 @@
+jsonschema>=4.23,<5
+websockets>=14,<16
+numpy>=2,<3
+sounddevice>=0.5,<1; platform_system == "Windows"
