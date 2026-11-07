@@ -113,6 +113,19 @@ test('Phone Agent settings shows the latest runtime stdout for audio readiness',
   assert.match(document.body.textContent, /sample_rate/)
 })
 
+test('Phone Agent settings provides a voice test panel with wake and owner metrics', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: {
+      state: 'listening', metrics: { wakePublished: 3, wakeAccepted: 2, asrCompleted: 2, ownerVerified: 1, ownerRejected: 1, ownerLastScore: .42 },
+    } }),
+    phoneAgentDiagnosticsReset: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
+  } })
+  assert.match(document.body.textContent, /Voice test panel/)
+  assert.match(document.body.textContent, /Wake detections/)
+  assert.match(document.body.textContent, /Owner verified/)
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === 'Clear test counters').click())
+})
+
 test('Phone Agent settings shows the Bot selected by a wake event', async t => {
   const document = await mount(t, PhoneAgentSettings, { actions: {
     phoneAgent: async () => ({ config: { enabled: true }, bots: [{ id: 'b', name: '华子' }], runtime: { state: 'listening', activeBotId: 'b' } }),

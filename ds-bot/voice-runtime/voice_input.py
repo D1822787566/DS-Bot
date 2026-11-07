@@ -142,21 +142,31 @@ class VoiceInput:
             self.notify('audio.segment.ended', bot_id=lease.bot_id, wake_session_id=lease.wake_session_id,
                         segment_id=segment.segment_id, samples=len(segment.samples))
             self._state('listening', 'transcribing', 'processing')
+            inference_started = self.clock()
             try:
                 text, owner = await self.models.recognize(segment)
             except SpeechFailure as error:
+                error_code = str(error)
+                failure_kind = 'owner.failed' if error_code.startswith('speaker') else 'asr.failed'
+                self.notify(failure_kind, segment_id=segment.segment_id,
+                            error_code=error_code,
+                            duration_ms=round(max(0., self.clock() - inference_started) * 1000, 3))
                 self._state('listening', 'awaiting_speech', str(error))
                 return
             if self.lease is not lease:
                 return
             if owner.identity != 'owner' or owner.status != 'verified':
-                self.notify('identity.rejected', segment_id=segment.segment_id, score=owner.score)
+                self.notify('identity.rejected', segment_id=segment.segment_id, score=owner.score,
+                            status=owner.status)
                 self._state('listening', 'awaiting_speech', 'owner_not_verified')
                 return
-            self.notify('identity.verified', segment_id=segment.segment_id, score=owner.score)
+            self.notify('identity.verified', segment_id=segment.segment_id, score=owner.score,
+                        status=owner.status)
             if not isinstance(text, str) or not text.strip():
                 self._state('listening', 'awaiting_speech', 'empty_transcript')
                 return
+            self.notify('asr.completed', segment_id=segment.segment_id, characters=len(text),
+                        duration_ms=round(max(0., self.clock() - inference_started) * 1000, 3))
             phase = self.sessions.current.phase if self.sessions.current else None
             if phase is SessionPhase.FIRST_TURN_PENDING:
                 if self._is_name_only(text, lease.names):

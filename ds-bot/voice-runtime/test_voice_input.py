@@ -71,7 +71,7 @@ async def reply(pipeline, bridge):
 
 def test_first_owner_turn_enters_only_the_woken_bot_existing_session():
     async def run():
-        pipeline, bridge, clock, _ = subject()
+        pipeline, bridge, clock, events = subject()
         await pipeline.process(audio())
         assert bridge.sent == []
         await wake(pipeline)
@@ -81,6 +81,7 @@ def test_first_owner_turn_enters_only_the_woken_bot_existing_session():
         assert (item['text'], item['bot_id'], item['session_id']) == ('检查项目', 'a', 'chat-a')
         assert item['speaker']['status'] == 'owner_verified' and item['speaker']['model_id'] == 'cam++'
         assert item['wake_session_id'] == 'w1' and item['segment_id'] == 1
+        assert any(kind == 'asr.completed' for kind, _ in events)
     asyncio.run(run())
 
 

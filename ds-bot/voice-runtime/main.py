@@ -126,13 +126,82 @@ def resample_pcm16(chunk: bytes, source_rate: int, target_rate: int) -> bytes:
         raise ValueError("audio sample rates must be positive")
     if source_rate == target_rate or not chunk:
         return chunk
-    source = np.frombuffer(chunk, dtype="<i2").astype(np.float32)
-    target_length = max(1, round(len(source) * target_rate / source_rate))
-    target = np.interp(
-        np.linspace(0, len(source) - 1, target_length),
-        np.arange(len(source)), source,
-    )
-    return np.rint(np.clip(target, -32768, 32767)).astype("<i2").tobytes()
+    resampler = StreamingPcm16Resampler(source_rate, target_rate)
+    return resampler.push(chunk) + resampler.flush()
+
+
+class StreamingPcm16Resampler:
+    """Keep sample phase across microphone chunks during rate conversion."""
+
+    def __init__(self, source_rate: int, target_rate: int):
+        if source_rate <= 0 or target_rate <= 0:
+            raise ValueError("audio sample rates must be positive")
+        self.source_rate = int(source_rate)
+        self.target_rate = int(target_rate)
+        self._step = self.source_rate / self.target_rate
+        self._buffer = np.empty(0, dtype=np.float64)
+        self._base_index = 0
+        self._input_count = 0
+        self._output_count = 0
+
+    def push(self, chunk: bytes) -> bytes:
+        if not isinstance(chunk, bytes) or len(chunk) % 2:
+            raise ValueError("PCM16 chunk must contain complete samples")
+        if not chunk:
+            return b''
+        if self.source_rate == self.target_rate:
+            self._input_count += len(chunk) // 2
+            self._output_count = self._input_count
+            return chunk
+        values = np.frombuffer(chunk, dtype='<i2').astype(np.float64)
+        self._buffer = np.concatenate((self._buffer, values))
+        self._input_count += len(values)
+        result = self._available(final=False)
+        self._compact()
+        return self._encode(result)
+
+    def flush(self) -> bytes:
+        if self.source_rate == self.target_rate or self._input_count == 0:
+            return b''
+        result = self._available(final=True)
+        self._compact()
+        return self._encode(result)
+
+    def _available(self, *, final: bool):
+        target_count = round(self._input_count * self.target_rate / self.source_rate) if final else None
+        values = []
+        while target_count is None or self._output_count < target_count:
+            position = self._output_count * self._step
+            if not final and position + 1 >= self._input_count:
+                break
+            values.append(self._sample(position))
+            self._output_count += 1
+        return values
+
+    def _sample(self, position):
+        local = max(0., position - self._base_index)
+        index = int(local)
+        fraction = local - index
+        if index >= len(self._buffer) - 1:
+            return float(self._buffer[-1])
+        return float(self._buffer[index] * (1. - fraction) + self._buffer[index + 1] * fraction)
+
+    def _compact(self):
+        if not len(self._buffer):
+            return
+        keep_from = max(self._base_index,
+                        int(self._output_count * self._step) - 1)
+        if keep_from <= self._base_index:
+            return
+        offset = keep_from - self._base_index
+        self._buffer = self._buffer[offset:]
+        self._base_index = keep_from
+
+    @staticmethod
+    def _encode(values):
+        if not values:
+            return b''
+        return np.rint(np.clip(np.asarray(values), -32768, 32767)).astype('<i2').tobytes()
 
 
 class WindowsPcmPlayback:
@@ -337,10 +406,12 @@ class WindowsWakeRuntime:
         self._closed = False
         self.on_pcm = self.on_gap = None
         self.processing = None
+        self.resampler = None
 
     async def start(self):
         """Open the microphone before the host reports the runtime as ready."""
         await self.capture.start()
+        self.resampler = StreamingPcm16Resampler(self.capture.sample_rate, 16000)
         unsupported = self.detector.diagnostics_snapshot().get("unsupported_wake_names", [])
         if unsupported:
             print(json.dumps({"type": "windows.wake.unsupported_names",
@@ -350,12 +421,17 @@ class WindowsWakeRuntime:
         frames = 0
         samples = 0
         peak = 0
+        energy = 0.0
+        energy_samples = 0
         next_report = 0.0
         last_dropped = 0
         try:
             while not self._closed:
                 chunk = await self.capture.next_chunk()
-                pcm = resample_pcm16(chunk, self.capture.sample_rate, 16000)
+                if (getattr(self, 'resampler', None) is None
+                        or self.resampler.source_rate != self.capture.sample_rate):
+                    self.resampler = StreamingPcm16Resampler(self.capture.sample_rate, 16000)
+                pcm = self.resampler.push(chunk)
                 if self.capture.dropped_chunks != last_dropped:
                     last_dropped = self.capture.dropped_chunks
                     if self.on_gap:
@@ -366,6 +442,9 @@ class WindowsWakeRuntime:
                 frames += 1
                 samples += len(values)
                 peak = max(peak, int(np.max(np.abs(values.astype(np.int32)), initial=0)))
+                normalized = values.astype(np.float64) / 32768.0
+                energy += float(np.dot(normalized, normalized))
+                energy_samples += len(values)
                 hits = self.detector.process_pcm16(pcm)
                 for hit in hits:
                     payload = self.detector.event_for_hit(hit)
@@ -376,16 +455,20 @@ class WindowsWakeRuntime:
                             await result
                 # Keep the detector chunk in the bounded command segment. A
                 # user can say the wake word and the request in one chunk;
-                # VoiceInput removes a leading wake name on the first turn.
+                # the full ASR transcript remains available to the Bot.
                 if self.on_pcm is not None:
                     self.on_pcm(pcm)
                 now = time.monotonic()
                 if now >= next_report:
                     print(json.dumps({"type": "windows.wake.audio", "frames": frames,
                                       "samples": samples, "peak": peak,
+                                      "rms": (energy / max(1, energy_samples)) ** .5,
+                                      "dropped_chunks": self.capture.dropped_chunks,
                                       "wake_diagnostics": self.detector.diagnostics_snapshot()},
                                      ensure_ascii=False), flush=True)
                     peak = 0
+                    energy = 0.0
+                    energy_samples = 0
                     next_report = now + 5.0
         finally:
             await self.close()

@@ -177,6 +177,7 @@ export function install(rt) {
         case 'plugins': return ok(await rt.pluginCatalog())
         case 'phone-agent': return ok(rt.phoneAgent())
         case 'phone-agent-test': return ok(rt.phoneAgentTest())
+        case 'phone-agent-diagnostics-reset': return ok(rt.phoneAgentDiagnosticsReset())
         case 'phone-agent-update':
           await rt.load()
           return ok(await rt.phoneAgentUpdate(body))

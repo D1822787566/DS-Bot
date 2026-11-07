@@ -55,15 +55,44 @@ test('stream parser preserves split JSON and removes private provider output', (
 test('sanitized diagnostics retain integer segment IDs, identity outcomes and nested wake counters', () => {
   const parser = phoneAgent.createPhoneAgentRuntimeParser(() => {})
   parser.write('{"type":"identity.verified","segment_id":7,"text":"private transcript","pcm":[1,2]}\n')
-  parser.write('{"type":"identity.rejected","segment_id":8,"credential":"private-key"}\n')
-  parser.write('{"type":"windows.wake.audio","frames":24,"wake_diagnostics":{"frames":12,"keyword_results":3,"valid_hits":2,"utterance_boundaries":1,"text":"private transcript","credential":"private-key"}}\n')
+  parser.write('{"type":"identity.rejected","segment_id":8,"status":"unknown","score":0.31,"credential":"private-key"}\n')
+  parser.write('{"type":"windows.wake.audio","frames":24,"peak":18000,"rms":0.12,"dropped_chunks":2,"wake_diagnostics":{"frames":12,"keyword_results":3,"valid_hits":2,"unknown_keywords":1,"utterance_boundaries":1,"text":"private transcript","credential":"private-key"}}\n')
   const lines = parser.output().split('\n').map(line => JSON.parse(line))
   assert.deepEqual(lines, [
     { type: 'identity.verified', segment_id: 7 },
-    { type: 'identity.rejected', segment_id: 8 },
-    { type: 'windows.wake.audio', frames: 24, wake_diagnostics: { frames: 12, keyword_results: 3, valid_hits: 2, utterance_boundaries: 1 } },
+    { type: 'identity.rejected', status: 'unknown', segment_id: 8, score: .31 },
+    { type: 'windows.wake.audio', frames: 24, dropped_chunks: 2, peak: 18000, rms: .12,
+      wake_diagnostics: { frames: 12, keyword_results: 3, valid_hits: 2, unknown_keywords: 1, utterance_boundaries: 1 } },
   ])
   assert.doesNotMatch(parser.output(), /private transcript|private-key|pcm/)
+})
+
+test('aggregates safe wake, ASR and owner metrics without retaining transcripts', () => {
+  const metrics = phoneAgent.emptyPhoneAgentMetrics()
+  for (const event of [
+    { type: 'windows.wake.audio', frames: 12, peak: 18000, rms: .12, dropped_chunks: 2,
+      wake_diagnostics: { keyword_results: 3, valid_hits: 2, cooldown_drops: 1, unknown_keywords: 1, utterance_boundaries: 4 } },
+    { type: 'windows.wake.published' },
+    { type: 'runtime.wake', bot_id: 'b', wake_session_id: 'w' },
+    { type: 'audio.segment.ended', segment_id: 7 },
+    { type: 'asr.completed', segment_id: 7, characters: 8, duration_ms: 321 },
+    { type: 'identity.rejected', segment_id: 7, score: .31, status: 'unknown' },
+    { type: 'owner.failed', segment_id: 7, error_code: 'speaker_timeout' },
+    { type: 'input.submit', segment_id: 7 },
+    { type: 'input.rejected', segment_id: 7, reason: 'owner_not_verified' },
+  ]) phoneAgent.recordPhoneAgentMetric(metrics, event)
+  assert.equal(metrics.wakePublished, 1)
+  assert.equal(metrics.wakeAccepted, 1)
+  assert.equal(metrics.wakeKeywordResults, 3)
+  assert.equal(metrics.wakeCooldownDrops, 1)
+  assert.equal(metrics.microphoneDrops, 2)
+  assert.equal(metrics.asrCompleted, 1)
+  assert.equal(metrics.ownerRejected, 1)
+  assert.equal(metrics.ownerFailed, 1)
+  assert.equal(metrics.lastOwnerError, 'speaker_timeout')
+  assert.equal(metrics.ownerLastScore, .31)
+  assert.equal(metrics.inputRejected, 1)
+  assert.equal(metrics.recent.some(item => item.text), false)
 })
 
 test('runtime view survives page loads with structured startup and segment diagnostics', () => {

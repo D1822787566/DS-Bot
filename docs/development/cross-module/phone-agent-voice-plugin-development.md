@@ -152,6 +152,7 @@ Confirmed / Implementation in progress
 - `[用户确认]` 声纹失败时出现拒绝诊断，不产生 `input.submit`。
 - `[用户确认]` ASR 或模型依赖失败时出现明确错误，不会把空文本提交给 Bot。
 - `[用户确认]` Bot 切换、Bridge 重连或 runtime 停止后，旧语音段不能提交到旧 Bot/session。
+- `[用户确认]` 语音测试面板清零后重复测试可以区分唤醒候选、音频丢帧、ASR、主人声纹和 Bridge 提交失败；面板不保存原始音频或完整转写。
 
 - `[代码证据]` 已实现 `speech_capture.py` 的有界 PCM/Silero VAD 分段、`speech_models.py` 的 Paraformer/CAM++ 并行推理与超时占位、`voice_input.py` 的首轮/连续对话准入、`voice_output.py` 的可打断 TTS 队列、`audio_processing.py` 的 Windows AEC 处理边界，以及 `main.py` 到这些组件的托管接线。
 - `[代码证据]` 已实现 DS Bot 自有 Python 3.12 环境准备、模型和 TTS 私有配置迁移、frozen 053 续话 provider 的 DS Bot 私有适配、Bridge wake/session/generation 隔离和 roster 变更刷新。
@@ -164,6 +165,9 @@ Confirmed / Implementation in progress
 - `[用户确认]` 每个通过声纹和连续对话准入的语音段都提交完整 ASR 文本，包括配置唤醒词、标点和文本边界；只有 ASR 内容为空或规范化后完全等于唤醒词时才不提交。语义连续对话模型仍负责后续语音段的准入判断，准入后不再删除任何称呼或其他内容。
 - `[代码证据]` 已修复所有轮次的 ASR 内容裁剪：ASR 返回、首轮/连续对话准入、澄清暂存和 DS Bot Bridge prompt 均保留原始文本；回归测试确认“华子，检查项目”和“华子，再具体一点”原样进入 Bridge submit。
 - `[代码证据]` 已修复唤醒词和命令在同一音频块中时的输入截断：Windows KWS 命中后不再丢弃命中块，命中块继续进入 VAD/ASR。
+- `[代码证据]` 已增加 Phone Agent 语音测试面板和安全指标聚合：清零后重复说唤醒词和短指令，UI 显示输入帧/丢帧、RMS/峰值、KWS 结果和命中、VAD 段、ASR、主人声纹分数与拒绝原因、Bridge 提交结果及最近事件；不显示 PCM、完整转写、声纹原文或 secret。
+- `[代码证据]` 已修复 Windows 输入重采样跨块状态丢失：采集设备常见的 48 kHz PCM 现在通过有状态重采样器连续转换到 16 kHz，再进入 KWS、VAD、ASR 和声纹；新增回归覆盖分块转换一致性。输入诊断增加 RMS、峰值和丢块计数。
+- `[待完成]` 现有历史启动日志只有 runtime ready 信息，不能回溯此前的失败阶段；需要在新面板清零后做一轮真实 Windows 重复测试，才能判断主要损失发生在音量/丢帧、KWS、VAD、ASR 还是声纹。
 - `[待完成]` 仍需在 DS Bot Desktop 中启动托管 runtime，验证真实 Windows 麦克风、主人声纹、TTS 网络回复、扬声器播放、Bot 切换和重连；这些物理设备验收未由自动化测试替代。
 
 ### 10.2 开发条件核对
@@ -204,11 +208,13 @@ Confirmed / Implementation in progress
 
 - 修改对象：Plugins 页面和客户端 API actions。
 - 完成条件：用户可读取/保存 DS Bot 自有设置，编辑每 Bot 唤醒词和音色，并看到 Bridge、音频、声纹、TTS 和错误状态；页面不要求填写外部 Phone Agent 工程路径。
+- `[代码证据]` 设置页已提供语音测试面板、计数清零和最近安全事件视图。
 
 ### 步骤 5：验证与验收
 
 - 修改对象：DS Bot Host/Bridge tests、迁移后的 Python runtime tests、Windows acceptance scripts。
 - 完成条件：协议、路由、幂等、回复回流、构建、lint 和受控 Windows 麦克风/扬声器验收通过；Android 不作为阻塞项。
+- `[待完成]` 使用测试面板完成至少一轮清零后的重复唤醒、ASR、声纹和提交统计；当前不能用历史启动日志替代这轮物理设备验收。
 
 ## 13. 验收标准
 

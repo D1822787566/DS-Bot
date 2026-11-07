@@ -3,9 +3,10 @@ import asyncio
 import sys
 from types import SimpleNamespace
 import pytest
+import numpy as np
 
 import main
-from main import choose_input_device, choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime
+from main import choose_input_device, choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime, StreamingPcm16Resampler
 from bridge_client import BridgeEvent
 
 
@@ -159,6 +160,15 @@ def test_pcm_output_is_resampled_to_the_selected_windows_device_rate():
     assert len(result) == 12
     assert result[:2] == b"\x00\x00"
     assert int.from_bytes(result[-2:], "little", signed=True) == 32767
+
+
+def test_streaming_input_resampler_preserves_chunk_boundaries():
+    source = (np.sin(np.linspace(0, 12, 4800)) * 12000).astype('<i2').tobytes()
+    expected = resample_pcm16(source, 48000, 16000)
+    resampler = StreamingPcm16Resampler(48000, 16000)
+    chunks = [source[offset:offset + 960] for offset in range(0, len(source), 960)]
+    result = b''.join(resampler.push(chunk) for chunk in chunks) + resampler.flush()
+    assert result == expected
 
 
 def test_idle_bridge_timeout_does_not_shutdown_the_runtime():

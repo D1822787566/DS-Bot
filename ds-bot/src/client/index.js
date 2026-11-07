@@ -674,6 +674,7 @@ export function apply(ctx) {
   actions.phoneAgentStart = () => call('phone-agent-start')
   actions.phoneAgentStop = () => call('phone-agent-stop')
   actions.phoneAgentTest = () => call('phone-agent-test')
+  actions.phoneAgentDiagnosticsReset = () => call('phone-agent-diagnostics-reset')
   // DSH's Models page, through DS Bot's own onboarding step while it is registered.
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.('settings.onboarding') ?? []).some(entry => entry.options?.id === MODELS_STEP)

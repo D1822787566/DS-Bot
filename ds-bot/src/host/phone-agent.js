@@ -20,22 +20,89 @@ export function appendPhoneAgentOutput(previous = '', chunk = '') {
 }
 const statusCode = value => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(value) ? value : ''
 const RUNTIME_STATES = new Set(['stopped', 'starting', 'listening', 'speaking', 'paused', 'error'])
+export function emptyPhoneAgentMetrics() {
+  return {
+    startedAt: new Date().toISOString(),
+    microphoneFrames: 0, microphoneDrops: 0, microphonePeak: 0, microphoneRms: 0,
+    wakeKeywordResults: 0, wakeValidHits: 0, wakePublished: 0, wakeAccepted: 0,
+    wakeRejected: 0, wakeCooldownDrops: 0, wakeUnknownKeywords: 0, wakeBoundaries: 0,
+    segmentStarted: 0, segmentEnded: 0, segmentDropped: 0, segmentDropReasons: {},
+    asrAttempted: 0, asrCompleted: 0, asrFailed: 0, lastAsrError: '',
+    ownerVerified: 0, ownerRejected: 0, ownerFailed: 0, lastOwnerError: '', ownerLastScore: null, ownerMinScore: null, ownerMaxScore: null,
+    inputSubmitted: 0, inputAccepted: 0, inputRejected: 0, recent: [],
+  }
+}
+
+const metricNumber = value => typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+export function recordPhoneAgentMetric(metrics, event = {}) {
+  if (!metrics || typeof event?.type !== 'string') return metrics
+  const type = event.type
+  const diagnostics = event.wake_diagnostics && typeof event.wake_diagnostics === 'object'
+    ? event.wake_diagnostics : {}
+  if (type === 'windows.wake.audio') {
+    metrics.microphoneFrames = metricNumber(event.frames) ?? metrics.microphoneFrames
+    metrics.microphoneDrops = metricNumber(event.dropped_chunks) ?? metrics.microphoneDrops
+    metrics.microphonePeak = metricNumber(event.peak) ?? metrics.microphonePeak
+    metrics.microphoneRms = metricNumber(event.rms) ?? metrics.microphoneRms
+    for (const [field, key] of [['keyword_results', 'wakeKeywordResults'], ['valid_hits', 'wakeValidHits'],
+      ['cooldown_drops', 'wakeCooldownDrops'], ['unknown_keywords', 'wakeUnknownKeywords'],
+      ['utterance_boundaries', 'wakeBoundaries']]) {
+      const value = metricNumber(diagnostics[field])
+      if (value !== undefined) metrics[key] = value
+    }
+  } else if (type === 'windows.wake.published') metrics.wakePublished++
+  else if (type === 'runtime.wake') metrics.wakeAccepted++
+  else if (type === 'runtime.state' && event.result === 'wake_rejected') metrics.wakeRejected++
+  else if (type === 'audio.segment.started') metrics.segmentStarted++
+  else if (type === 'audio.segment.ended') { metrics.segmentEnded++; metrics.asrAttempted++ }
+  else if (type === 'audio.segment.dropped') {
+    metrics.segmentDropped++
+    const reason = statusCode(event.reason) || 'unknown'
+    metrics.segmentDropReasons[reason] = (metrics.segmentDropReasons[reason] ?? 0) + 1
+  } else if (type === 'asr.completed') metrics.asrCompleted++
+  else if (type === 'asr.failed') { metrics.asrFailed++; metrics.lastAsrError = statusCode(event.error_code) || 'asr_failed' }
+  else if (type === 'owner.failed') { metrics.ownerFailed++; metrics.lastOwnerError = statusCode(event.error_code) || 'owner_failed' }
+  else if (type === 'identity.verified' || type === 'identity.rejected') {
+    if (type === 'identity.verified') metrics.ownerVerified++
+    else metrics.ownerRejected++
+    const score = metricNumber(event.score)
+    if (score !== undefined) {
+      metrics.ownerLastScore = score
+      metrics.ownerMinScore = metrics.ownerMinScore === null ? score : Math.min(metrics.ownerMinScore, score)
+      metrics.ownerMaxScore = metrics.ownerMaxScore === null ? score : Math.max(metrics.ownerMaxScore, score)
+    }
+  } else if (type === 'input.submit') metrics.inputSubmitted++
+  else if (type === 'input.accepted') metrics.inputAccepted++
+  else if (type === 'input.rejected') metrics.inputRejected++
+
+  if (type !== 'windows.wake.audio') {
+    const recent = { type }
+    for (const [source, target] of [['segment_id', 'segmentId'], ['reason', 'reason'], ['status', 'status'],
+      ['result', 'result'], ['error_code', 'errorCode'], ['score', 'score']]) {
+      if (event[source] !== undefined && (typeof event[source] === 'number' || statusCode(event[source]))) recent[target] = event[source]
+    }
+    metrics.recent = [...(Array.isArray(metrics.recent) ? metrics.recent : []), recent].slice(-24)
+  }
+  return metrics
+}
+
 function safeRuntimeLine(line) {
   try {
     const event = JSON.parse(String(line))
     if (typeof event?.type !== 'string' || !/^(runtime|windows|audio|input|output|asr|owner|identity|continuation)\.[a-zA-Z0-9._]+$/.test(event.type)) return ''
     const safe = { type: event.type }
-    for (const key of ['state', 'stage', 'error_code', 'result', 'bot_id', 'wake_session_id']) {
+    for (const key of ['state', 'stage', 'error_code', 'result', 'bot_id', 'wake_session_id', 'status', 'reason']) {
       if (statusCode(event[key])) safe[key] = event[key]
     }
     if (Number.isInteger(event.segment_id) && event.segment_id >= 0) safe.segment_id = event.segment_id
     if (event.error_code === '') safe.error_code = ''
-    for (const key of ['sample_rate', 'device_index', 'frames', 'dropped', 'dropped_chunks', 'keyword_results', 'valid_hits', 'duration_ms', 'generation']) {
+    for (const key of ['sample_rate', 'device_index', 'frames', 'samples', 'dropped', 'dropped_chunks', 'keyword_results', 'valid_hits', 'duration_ms', 'speech_duration_ms', 'characters', 'generation', 'peak', 'rms', 'score', 'utterance_index']) {
       if (typeof event[key] === 'number' && Number.isFinite(event[key])) safe[key] = event[key]
     }
     if (event.wake_diagnostics && typeof event.wake_diagnostics === 'object' && !Array.isArray(event.wake_diagnostics)) {
       const diagnostics = {}
-      for (const key of ['frames', 'keyword_results', 'valid_hits', 'utterance_boundaries', 'cooldown_drops', 'generation']) {
+      for (const key of ['frames', 'keyword_results', 'valid_hits', 'utterance_boundaries', 'cooldown_drops', 'unknown_keywords', 'generation']) {
         if (Number.isFinite(event.wake_diagnostics[key])) diagnostics[key] = event.wake_diagnostics[key]
       }
       if (Object.keys(diagnostics).length) safe.wake_diagnostics = diagnostics
@@ -55,7 +122,8 @@ export function createPhoneAgentRuntimeParser(onEvent) {
         const safe = safeRuntimeLine(line)
         if (!safe) continue
         output = appendPhoneAgentOutput(output, safe)
-        onEvent(phoneAgentRuntimeEvent(safe), JSON.parse(safe).type)
+        const event = JSON.parse(safe)
+        onEvent(phoneAgentRuntimeEvent(safe), event.type, event)
       }
     },
     output: () => output,
@@ -436,6 +504,7 @@ export function phoneAgentRuntimeDiagnostics(config = defaultPhoneAgentConfig(),
     ...(bridgePort === undefined ? {} : { bridgePort }),
     ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
     ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
+    ...(runtime.metrics ? { metrics: runtime.metrics } : {}),
   }
 }
 
@@ -460,6 +529,7 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
       ...(runtime.error ? { error: text(runtime.error, 300) } : {}),
       ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
       ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
+      ...(runtime.metrics ? { metrics: runtime.metrics } : {}),
       ...(runtime.activeBotId ? { activeBotId: text(runtime.activeBotId, 128) } : {}),
       ...(runtime.wakeSessionId ? { wakeSessionId: text(runtime.wakeSessionId, 128) } : {}),
     },
@@ -510,6 +580,7 @@ export class RuntimeManager {
     this.stage = ''
     this.errorCode = ''
     this.lastResult = ''
+    this.metrics = emptyPhoneAgentMetrics()
     this.runtimeReady = false
     this.starting = false
     this.timeout = null
@@ -526,6 +597,7 @@ export class RuntimeManager {
       ...(this.error ? { error: this.error } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
       ...(this.lastOutput ? { lastOutput: this.lastOutput } : {}),
+      metrics: this.metrics,
       ...(this.activeBotId ? { activeBotId: this.activeBotId } : {}),
       ...(this.wakeSessionId ? { wakeSessionId: this.wakeSessionId } : {}),
     }
@@ -544,6 +616,7 @@ export class RuntimeManager {
     this.lastError = ''
     this.lastOutput = ''
     this.lastResult = ''
+    this.metrics = emptyPhoneAgentMetrics()
     this.activeBotId = ''
     this.wakeSessionId = ''
     this.activityEpoch = randomUUID()
@@ -577,7 +650,7 @@ export class RuntimeManager {
   }
 
   watchOutput(child, generation, runtime) {
-    const parser = createPhoneAgentRuntimeParser((change, type) => {
+    const parser = createPhoneAgentRuntimeParser((change, type, event) => {
       if (generation !== this.generation) return
       if (type === 'runtime.ready' && runtime) {
         this.runtimeReady = true
@@ -587,6 +660,7 @@ export class RuntimeManager {
         delete change.state
       }
       Object.assign(this, change)
+      recordPhoneAgentMetric(this.metrics, event)
       if (this.errorCode) this.error = runtimeFailure(this.errorCode)
     })
     child.stdout?.on('data', data => {
@@ -689,6 +763,7 @@ export class RuntimeManager {
   sessionEvent(session, event) { this.bridge?.sessionEvent(session, event) }
   rolesChanged() { this.bridge?.rolesChanged() }
   diagnose(config) { return phoneAgentRuntimeDiagnostics(config, this.view()) }
+  resetMetrics() { this.metrics = emptyPhoneAgentMetrics(); return this.view() }
 }
 
 export function install(rt) {
@@ -753,8 +828,9 @@ export function install(rt) {
   }
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
   const phoneAgentTest = () => ({ ...phoneAgent(), diagnostics: manager.diagnose(state.prefs.phoneAgent) })
+  const phoneAgentDiagnosticsReset = () => { manager.resetMetrics(); return phoneAgent() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
-  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentSubmit })
+  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.
   const desktopRuntime = process.env.DS_BOT_APP === '1'
