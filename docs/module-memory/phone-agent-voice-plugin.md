@@ -63,7 +63,7 @@
 - [代码证据] Windows 源码重启实测后配置已持久化为 `E:\\project_space\\phone_agent`、`D:\\phone_agent_runtime\\rebuild\\device-smoke\\runtime.json`、`C01` 和 `扬声器 (Philips SPA5308P)`；不再回退到 `.ds-bot-local\\phone_agent`。
 - [代码证据] 上述配置导入和 launcher 修复属于被 D-PAVP-015 supersede 的过渡实现；当前不应视为语音链路迁移完成。
 - [代码证据] 新架构的服务启动策略已实现首段：DS Bot Desktop Host 创建 loopback Bridge、注入一次性 credential 并托管 `voice-runtime/main.py` 子进程；Python runtime 现在会在报告 ready 前打开配置的 Windows 麦克风，使用 WASAPI 端点选择、采样率重采样和 Sherpa 唤醒模型处理 PCM，并把 stdout 诊断显示到设置页。模型不支持的唤醒词会显示为 `windows.wake.unsupported_names`，不会阻塞同一设备上其他可识别的中文唤醒词。
-- [代码证据] Windows 源码桌面应用重启实测已看到托管 `python.exe main.py` 子进程持续运行；当前保存的 `Chief` 英文默认唤醒词被诊断为不支持，但 `华子` 等中文唤醒词仍可进入检测映射。唤醒候选现在通过认证 Bridge 的 `device.wake` 发送并由 DS Bot Host 确认，runtime 同时输出 `windows.wake.audio` 诊断。
+- [代码证据] Windows 源码桌面应用重启实测已看到托管 `python.exe main.py` 子进程持续运行；当前保存的 `Chief` 英文默认唤醒词被诊断为不支持，但 `华子` 等中文唤醒词仍可进入检测映射。唤醒候选现在通过认证 Bridge 的 `device.wake` 发送并由 DS Bot Host 确认，runtime 同时输出 `windows.wake.audio` 诊断；Phone Agent 设置每秒刷新运行状态和当前唤醒 Bot。
 
 ## 继续入口
 
