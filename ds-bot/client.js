@@ -15391,6 +15391,9 @@ function PhoneAgentSettings({ actions }) {
   const configField = (key, label, type = "text") => (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t(label)), (0, import_react34.createElement)("input", { className: "bt-input", type, value: draft.config[key] ?? "", onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, [key]: type === "checkbox" ? event.target.checked : event.target.value } })) }));
   const runtime = value?.runtime ?? { state: "stopped" };
   const diagnostics = value?.diagnostics;
+  const metrics = runtime.metrics ?? {};
+  const metric = (key, fallback = 0) => metrics[key] ?? fallback;
+  const ownerScore = typeof metrics.ownerLastScore === "number" ? metrics.ownerLastScore.toFixed(3) : "—";
   const stageLabels = {
     environment_checking: "Checking voice environment",
     environment_creating: "Creating voice environment",
@@ -15455,6 +15458,55 @@ function PhoneAgentSettings({ actions }) {
         diagnostics.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastError) : null,
         diagnostics.lastOutput ? (0, import_react34.createElement)("span", null, t("Last stdout")) : null,
         diagnostics.lastOutput ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastOutput) : null
+      ) : null
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card", "aria-label": t("Voice test panel") },
+      (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-panel-heading" },
+        (0, import_react34.createElement)(
+          "div",
+          null,
+          (0, import_react34.createElement)("h3", null, t("Voice test panel")),
+          (0, import_react34.createElement)("p", { className: "bt-note" }, t("Clear counters, then try the wake word and a short request several times. This panel keeps only counts and safe scores; it does not keep audio or transcripts."))
+        ),
+        (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentDiagnosticsReset, "Test counters cleared") }, t("Clear test counters"))
+      ),
+      (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-diagnostic-grid", role: "status" },
+        (0, import_react34.createElement)("span", null, t("Microphone frames")),
+        (0, import_react34.createElement)("strong", null, String(metric("microphoneFrames"))),
+        (0, import_react34.createElement)("span", null, t("Input drops")),
+        (0, import_react34.createElement)("strong", null, String(metric("microphoneDrops"))),
+        (0, import_react34.createElement)("span", null, t("Microphone peak / RMS")),
+        (0, import_react34.createElement)("strong", null, `${metric("microphonePeak")} / ${Number(metric("microphoneRms")).toFixed(3)}`),
+        (0, import_react34.createElement)("span", null, t("Wake detections")),
+        (0, import_react34.createElement)("strong", null, `${metric("wakePublished")} / ${metric("wakeAccepted")} accepted`),
+        (0, import_react34.createElement)("span", null, t("Keyword results")),
+        (0, import_react34.createElement)("strong", null, `${metric("wakeKeywordResults")} (${metric("wakeUnknownKeywords")} unknown)`),
+        (0, import_react34.createElement)("span", null, t("Speech segments")),
+        (0, import_react34.createElement)("strong", null, `${metric("segmentEnded")} ended / ${metric("segmentDropped")} dropped`),
+        (0, import_react34.createElement)("span", null, t("ASR completed")),
+        (0, import_react34.createElement)("strong", null, `${metric("asrCompleted")} / ${metric("asrAttempted")}`),
+        (0, import_react34.createElement)("span", null, t("Owner verified")),
+        (0, import_react34.createElement)("strong", null, `${metric("ownerVerified")} verified / ${metric("ownerRejected")} rejected / ${metric("ownerFailed")} failed`),
+        (0, import_react34.createElement)("span", null, t("Owner score")),
+        (0, import_react34.createElement)("strong", null, `${ownerScore} (${metrics.ownerMinScore ?? "—"}–${metrics.ownerMaxScore ?? "—"})`),
+        (0, import_react34.createElement)("span", null, t("Bot submissions")),
+        (0, import_react34.createElement)("strong", null, `${metric("inputAccepted")} accepted / ${metric("inputRejected")} rejected`)
+      ),
+      Array.isArray(metrics.recent) && metrics.recent.length ? (0, import_react34.createElement)(
+        "details",
+        { className: "bt-phone-recent" },
+        (0, import_react34.createElement)("summary", null, t("Recent diagnostic events")),
+        (0, import_react34.createElement)("ul", null, metrics.recent.slice().reverse().map((event, index) => (0, import_react34.createElement)(
+          "li",
+          { key: `${event.type}-${index}` },
+          `${event.type}${event.segmentId === void 0 ? "" : ` · segment ${event.segmentId}`}${event.reason ? ` · ${event.reason}` : ""}${typeof event.score === "number" ? ` · score ${event.score.toFixed(3)}` : ""}`
+        )))
       ) : null
     ),
     error ? (0, import_react34.createElement)("div", { className: "bt-error", role: "alert" }, hostText(error)) : null,
@@ -15524,7 +15576,7 @@ var PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
 `;
 
 // src/client/create-bot.js
@@ -22984,6 +23036,7 @@ function apply(ctx) {
   actions.phoneAgentStart = () => call("phone-agent-start");
   actions.phoneAgentStop = () => call("phone-agent-stop");
   actions.phoneAgentTest = () => call("phone-agent-test");
+  actions.phoneAgentDiagnosticsReset = () => call("phone-agent-diagnostics-reset");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);
