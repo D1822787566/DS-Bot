@@ -218,7 +218,13 @@ class VoiceRuntime:
     async def run(self):
         await self.start()
         while True:
-            await self.handle_event(await self.bridge.next_event())
+            try:
+                event = await self.bridge.next_event()
+            except asyncio.TimeoutError:
+                # An idle voice session is healthy. Keep the Bridge connection
+                # alive until it reports a real protocol or transport error.
+                continue
+            await self.handle_event(event)
 
 
 def make_tts(config: Mapping[str, object]):

@@ -107,3 +107,25 @@ def test_pcm_output_is_resampled_to_the_selected_windows_device_rate():
     assert len(result) == 12
     assert result[:2] == b"\x00\x00"
     assert int.from_bytes(result[-2:], "little", signed=True) == 32767
+
+
+def test_idle_bridge_timeout_does_not_shutdown_the_runtime():
+    class Bridge:
+        def __init__(self):
+            self.calls = 0
+
+        async def next_event(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise asyncio.TimeoutError
+            raise StopAsyncIteration
+
+    runtime = VoiceRuntime(Bridge(), object(), object())
+    async def start():
+        runtime.state = "listening"
+    runtime.start = start
+    try:
+        asyncio.run(runtime.run())
+    except StopAsyncIteration:
+        pass
+    assert runtime.bridge.calls == 2
