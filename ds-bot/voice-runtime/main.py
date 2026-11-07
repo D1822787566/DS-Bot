@@ -49,6 +49,36 @@ class NullTTS:
             yield b""
 
 
+def choose_output_device(devices, hostapis, configured_name: str = "", default_index=None):
+    """Return a stable PortAudio device index for a Windows output endpoint.
+
+    Windows exposes the same endpoint through MME, DirectSound, WDM-KS and
+    WASAPI. Passing the friendly name directly to sounddevice is ambiguous, so
+    prefer the exact name on WASAPI, then WDM-KS, then DirectSound.
+    """
+    if not isinstance(devices, (list, tuple)):
+        return default_index
+    candidates = [item for item in devices if isinstance(item, dict)
+                  and item.get("max_output_channels", 0) > 0]
+    wanted = str(configured_name or "").strip().casefold()
+    if wanted:
+        exact = [item for item in candidates if str(item.get("name", "")).strip().casefold() == wanted]
+        candidates = exact or [item for item in candidates
+                               if wanted in str(item.get("name", "")).casefold()]
+    if not candidates:
+        return default_index
+    priorities = ("windows wasapi", "windows wdm-ks", "windows directsound", "windows mme")
+    def rank(item):
+        hostapi = item.get("hostapi")
+        name = str(hostapis[hostapi].get("name", "")).casefold() if isinstance(hostapi, int) and 0 <= hostapi < len(hostapis) and isinstance(hostapis[hostapi], dict) else ""
+        try:
+            return priorities.index(name)
+        except ValueError:
+            return len(priorities)
+    selected = min(candidates, key=lambda item: (rank(item), int(item.get("index", 1 << 30))))
+    return selected.get("index", default_index)
+
+
 class WindowsPcmPlayback:
     """Small playback boundary. The real output stream is opened lazily."""
 
@@ -63,8 +93,13 @@ class WindowsPcmPlayback:
             import sounddevice as sd
 
             kwargs = {"samplerate": 16000, "channels": 1, "dtype": "int16"}
-            if self.device_name:
-                kwargs["device"] = self.device_name
+            default_index = None
+            try:
+                default_index = sd.default.device[1]
+            except (AttributeError, IndexError, TypeError):
+                pass
+            kwargs["device"] = choose_output_device(
+                sd.query_devices(), sd.query_hostapis(), self.device_name, default_index)
             self._stream = sd.RawOutputStream(**kwargs)
             self._stream.start()
         except Exception as error:

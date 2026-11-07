@@ -1,7 +1,7 @@
 import json
 import asyncio
 
-from main import runtime_config_from_env, VoiceRuntime
+from main import choose_output_device, runtime_config_from_env, VoiceRuntime
 from bridge_client import BridgeEvent
 
 
@@ -89,3 +89,13 @@ def test_runtime_unwraps_the_roles_snapshot_bridge_event_before_mapping():
     runtime = VoiceRuntime(Bridge(), object(), Playback())
     asyncio.run(runtime.start())
     assert runtime.mapping.roles == {"b": ("小贝",)}
+
+
+def test_output_device_selection_prefers_wasapi_when_windows_names_are_duplicated():
+    devices = [
+        {"name": "扬声器 (Philips SPA5308P)", "max_output_channels": 2, "hostapi": 0, "index": 5},
+        {"name": "扬声器 (Philips SPA5308P)", "max_output_channels": 2, "hostapi": 1, "index": 14},
+        {"name": "扬声器 (Philips SPA5308P)", "max_output_channels": 2, "hostapi": 2, "index": 18},
+    ]
+    hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WDM-KS"}, {"name": "Windows WASAPI"}]
+    assert choose_output_device(devices, hostapis, "扬声器 (Philips SPA5308P)") == 18
