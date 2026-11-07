@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { VoiceBridgeServer, createVoiceRoleRoster } from './voice-bridge.js'
@@ -15,16 +15,70 @@ const textOr = (value, fallback, max = 240) => text(value, max) || fallback
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback
 const finite = (value, fallback, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
 export function appendPhoneAgentOutput(previous = '', chunk = '') {
-  const lines = `${previous || ''}\n${String(chunk)}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const lines = `${previous || ''}\n${String(chunk)}`.split(/\r?\n/).map(safeRuntimeLine).filter(Boolean)
   return lines.join('\n').slice(-2000)
 }
+const statusCode = value => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(value) ? value : ''
+const RUNTIME_STATES = new Set(['stopped', 'starting', 'listening', 'speaking', 'paused', 'error'])
+function safeRuntimeLine(line) {
+  try {
+    const event = JSON.parse(String(line))
+    if (typeof event?.type !== 'string' || !/^(runtime|windows|audio|input|output|asr|owner|identity|continuation)\.[a-zA-Z0-9._]+$/.test(event.type)) return ''
+    const safe = { type: event.type }
+    for (const key of ['state', 'stage', 'error_code', 'result', 'bot_id', 'wake_session_id']) {
+      if (statusCode(event[key])) safe[key] = event[key]
+    }
+    if (Number.isInteger(event.segment_id) && event.segment_id >= 0) safe.segment_id = event.segment_id
+    if (event.error_code === '') safe.error_code = ''
+    for (const key of ['sample_rate', 'device_index', 'frames', 'dropped', 'dropped_chunks', 'keyword_results', 'valid_hits', 'duration_ms', 'generation']) {
+      if (typeof event[key] === 'number' && Number.isFinite(event[key])) safe[key] = event[key]
+    }
+    if (event.wake_diagnostics && typeof event.wake_diagnostics === 'object' && !Array.isArray(event.wake_diagnostics)) {
+      const diagnostics = {}
+      for (const key of ['frames', 'keyword_results', 'valid_hits', 'utterance_boundaries', 'cooldown_drops', 'generation']) {
+        if (Number.isFinite(event.wake_diagnostics[key])) diagnostics[key] = event.wake_diagnostics[key]
+      }
+      if (Object.keys(diagnostics).length) safe.wake_diagnostics = diagnostics
+    }
+    return JSON.stringify(safe)
+  } catch { return '' }
+}
+
+export function createPhoneAgentRuntimeParser(onEvent) {
+  let pending = '', output = ''
+  return {
+    write(chunk) {
+      pending += String(chunk)
+      const lines = pending.split(/\r?\n/)
+      pending = lines.pop().slice(-65536)
+      for (const line of lines) {
+        const safe = safeRuntimeLine(line)
+        if (!safe) continue
+        output = appendPhoneAgentOutput(output, safe)
+        onEvent(phoneAgentRuntimeEvent(safe), JSON.parse(safe).type)
+      }
+    },
+    output: () => output,
+  }
+}
+
 export function phoneAgentRuntimeEvent(line = '') {
   try {
     const event = JSON.parse(String(line))
-    if (event?.type !== 'runtime.wake'
-        || typeof event.bot_id !== 'string' || !event.bot_id.trim()
-        || typeof event.wake_session_id !== 'string' || !event.wake_session_id.trim()) return {}
-    return { activeBotId: event.bot_id.trim().slice(0, 128), wakeSessionId: event.wake_session_id.trim().slice(0, 128) }
+    if (event?.type === 'runtime.ready') return { state: 'listening', stage: 'listening', error: '', errorCode: '' }
+    if (event?.type === 'runtime.progress' && statusCode(event.stage)) return { stage: event.stage }
+    if (event?.type === 'runtime.state') return {
+      ...(RUNTIME_STATES.has(event.state) ? { state: event.state } : {}),
+      ...(statusCode(event.stage) ? { stage: event.stage } : {}),
+      ...(statusCode(event.error_code) ? { errorCode: event.error_code } : {}),
+      ...(event.error_code === '' ? { errorCode: '', error: '' } : {}),
+      ...(statusCode(event.result) ? { lastResult: event.result } : {}),
+      ...(['waiting_for_wake', 'bridge_reconnecting', 'wake_mapping'].includes(event.stage) ? { activeBotId: '', wakeSessionId: '' } : {}),
+    }
+    if (event?.type === 'runtime.wake' && statusCode(event.bot_id) && statusCode(event.wake_session_id)) {
+      return { activeBotId: event.bot_id, wakeSessionId: event.wake_session_id }
+    }
+    return {}
   } catch {
     return {}
   }
@@ -57,6 +111,10 @@ export function defaultPhoneAgentConfig() {
     continuationModel: '',
     continuationUrl: '',
     continuationTimeout: 2,
+    continuationMode: 'legacy_nli',
+    continuationAcceptThreshold: .8,
+    continuationRejectThreshold: .25,
+    modelDevice: 'cpu',
     wakeTimeout: 8,
     continuationTimeoutSeconds: 12,
     clarificationTimeoutSeconds: 5,
@@ -79,6 +137,7 @@ const PHONE_AGENT_FIELDS = new Set([
   'asrModel', 'asrLanguage', 'asrModelDir', 'speakerModelDir', 'speakerProfileDir',
   'ttsModel', 'ttsVoice', 'ttsConfigPath', 'livekitUrl', 'livekitRoom',
   'continuationEnabled', 'continuationModel', 'continuationUrl', 'continuationTimeout',
+  'continuationMode', 'continuationAcceptThreshold', 'continuationRejectThreshold', 'modelDevice',
   'wakeTimeout', 'continuationTimeoutSeconds', 'clarificationTimeoutSeconds',
   'bargeInEnabled', 'wakeEnabled', 'speakerVerificationEnabled', 'runtimeRoot', 'pythonPath', 'configPath',
   'windowsWakeEnabled', 'windowsWakeModelDir', 'windowsWakeKeywordsScore', 'windowsWakeKeywordsThreshold', 'windowsWakeCooldownSeconds',
@@ -102,9 +161,76 @@ export function voiceRuntimeRoot() {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'voice-runtime')
 }
 
-export function voiceRuntimeLaunch(config = {}) {
-  const command = text(config.pythonPath, 500) || (process.platform === 'win32' ? 'python.exe' : 'python3')
-  return { command, args: ['main.py'], cwd: voiceRuntimeRoot() }
+export function voiceRuntimeEnvironmentRoot() {
+  return process.env.DSH_HOME
+    ? resolve(process.env.DSH_HOME, '..', 'voice-runtime-env')
+    : resolve(voiceRuntimeRoot(), '..', '..', '.ds-bot-local', 'voice-runtime-env')
+}
+
+export function voiceRuntimeLaunch() {
+  const command = join(voiceRuntimeEnvironmentRoot(), process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+  return { command, args: ['-u', 'main.py'], cwd: voiceRuntimeRoot() }
+}
+
+export function voiceRuntimePreparationLaunch() {
+  const installed = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python312', 'python.exe') : ''
+  const command = process.platform === 'win32' ? (installed && existsSync(installed) ? installed : 'py.exe') : 'python3.12'
+  return {
+    command,
+    args: [...(command === 'py.exe' ? ['-3.12'] : []), '-u', 'prepare_runtime.py', '--environment', voiceRuntimeEnvironmentRoot()],
+    cwd: voiceRuntimeRoot(),
+  }
+}
+
+export function migratePhoneAgentOwnedConfig(config, privateRoot = resolve(voiceRuntimeEnvironmentRoot(), '..', 'voice-runtime-private')) {
+  const next = { ...config }
+  if (!config.ttsConfigPath) return next
+  const owned = join(privateRoot, '.env.tts')
+  if (resolve(config.ttsConfigPath) === resolve(owned)) return next
+  const source = envFile(config.ttsConfigPath)
+  if (!source.TTS_API_KEY) return next
+  const keys = ['TTS_API_KEY', 'TTS_MODEL', 'TTS_VOICE', 'TTS_PROVIDER', 'TTS_AUDIO_FORMAT', 'TTS_SAMPLE_RATE', 'TTS_WS_URL']
+  mkdirSync(privateRoot, { recursive: true, mode: 0o700 })
+  const temporary = join(privateRoot, `.env.tts-${randomUUID()}.tmp`)
+  try {
+    writeFileSync(temporary, keys.filter(key => source[key] !== undefined).map(key => `${key}=${source[key].replace(/[\r\n]/g, '')}`).join('\n') + '\n', { mode: 0o600, flag: 'wx' })
+    chmodSync(temporary, 0o600)
+    renameSync(temporary, owned)
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary)
+  }
+  next.ttsConfigPath = owned
+  return next
+}
+
+export function voiceRuntimeContinuationConfigPath() {
+  return resolve(voiceRuntimeEnvironmentRoot(), '..', 'voice-runtime-private', 'continuation.env')
+}
+
+export function migratePhoneAgentContinuationConfig(config = {}, {
+  privateRoot = dirname(voiceRuntimeContinuationConfigPath()),
+  sourceEnvPath = resolve(voiceRuntimeRoot(), '..', '..', '..', 'phone_agent', '.env'),
+  candidatePath = process.platform === 'win32' ? 'D:/phone_agent_runtime/voice-profile/continuation-runtime-wiring-20261101/runtime.candidate.json' : '',
+} = {}) {
+  const owned = join(privateRoot, 'continuation.env')
+  if (!existsSync(owned)) {
+    const source = envFile(sourceEnvPath)
+    let endpoint
+    try { endpoint = new URL(source.base_url) } catch { /* unsupported source is not imported */ }
+    if (source.model === 'deepseek-flash' && source.apikey && endpoint
+        && ['http:', 'https:'].includes(endpoint.protocol) && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash) {
+      mkdirSync(privateRoot, { recursive: true, mode: 0o700 })
+      writeFileSync(owned, `BASE_URL=${source.base_url}\nMODEL=deepseek-flash\nAPI_KEY=${source.apikey}\n`, { mode: 0o600, flag: 'wx' })
+      chmodSync(owned, 0o600)
+    }
+  }
+  const next = { ...config }
+  const candidate = jsonFile(candidatePath)
+  if (candidate.continuation_mode === 'frozen_llm' && candidate.continuation_model === 'deepseek-flash-continuation-prompt-v2-053') {
+    if (!text(config.continuationMode)) next.continuationMode = 'frozen_llm'
+    if (!text(config.continuationModel)) next.continuationModel = candidate.continuation_model
+  }
+  return next
 }
 
 export function phoneAgentEnvironmentFromRuntime(runtime = {}, environment = {}) {
@@ -143,6 +269,10 @@ export function phoneAgentDefaultsFromRuntime(runtime = {}, desktop = {}, tts = 
     continuationModel: textOr(runtime.continuation_model, base.continuationModel, 160),
     continuationUrl: textOr(runtime.continuation_url, base.continuationUrl, 300),
     continuationTimeout: finite(runtime.continuation_timeout, base.continuationTimeout, .1, 30),
+    continuationMode: runtime.continuation_mode === 'frozen_llm' ? 'frozen_llm' : base.continuationMode,
+    continuationAcceptThreshold: finite(runtime.continuation_accept_threshold, base.continuationAcceptThreshold, 0, 1),
+    continuationRejectThreshold: finite(runtime.continuation_reject_threshold, base.continuationRejectThreshold, 0, 1),
+    modelDevice: textOr(runtime.model_device, base.modelDevice, 32),
     wakeTimeout: finite(runtime.wake_first_turn_timeout, base.wakeTimeout, 1, 60),
     continuationTimeoutSeconds: finite(runtime.wake_continuation_timeout, base.continuationTimeoutSeconds, 1, 120),
     clarificationTimeoutSeconds: finite(runtime.wake_clarification_timeout, base.clarificationTimeoutSeconds, 1, 60),
@@ -171,7 +301,7 @@ function envFile(path) {
   if (!path || !existsSync(path)) return {}
   try {
     return Object.fromEntries(readFileSync(path, 'utf8').split(/\r?\n/).flatMap(line => {
-      const match = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+      const match = /^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
       return match ? [[match[1], match[2].replace(/^['"]|['"]$/g, '')]] : []
     }))
   } catch { return {} }
@@ -242,6 +372,11 @@ export function normalizePhoneAgentConfig(raw = {}) {
   value.continuationUrl = text(raw.continuationUrl, 300)
   if (value.continuationUrl && !/^https?:\/\/127\.0\.0\.1(?::\d{1,5})?(?:\/[^\s]*)?$/i.test(value.continuationUrl)) throw new Error('Continuation URL must use the local HTTP endpoint')
   value.continuationTimeout = finite(raw.continuationTimeout, base.continuationTimeout, .1, 30)
+  value.continuationMode = raw.continuationMode === 'frozen_llm' ? 'frozen_llm' : base.continuationMode
+  value.continuationAcceptThreshold = finite(raw.continuationAcceptThreshold, base.continuationAcceptThreshold, 0, 1)
+  value.continuationRejectThreshold = finite(raw.continuationRejectThreshold, base.continuationRejectThreshold, 0, 1)
+  if (value.continuationRejectThreshold >= value.continuationAcceptThreshold) throw new Error('Continuation reject threshold must be below its accept threshold')
+  value.modelDevice = raw.modelDevice === 'cpu' || /^cuda(?::\d{1,2})?$/.test(raw.modelDevice ?? '') ? raw.modelDevice : base.modelDevice
   value.wakeTimeout = finite(raw.wakeTimeout, base.wakeTimeout, 1, 60)
   value.continuationTimeoutSeconds = finite(raw.continuationTimeoutSeconds, base.continuationTimeoutSeconds, 1, 120)
   value.clarificationTimeoutSeconds = finite(raw.clarificationTimeoutSeconds, base.clarificationTimeoutSeconds, 1, 60)
@@ -286,14 +421,18 @@ export function updatePhoneAgentProfile(state, botId, patch = {}) {
 export function phoneAgentRuntimeDiagnostics(config = defaultPhoneAgentConfig(), runtime = { state: 'stopped' }) {
   const root = voiceRuntimeRoot()
   const bundledRuntime = existsSync(join(root, 'main.py'))
-  const pythonCommand = text(config.pythonPath, 500) || (process.platform === 'win32' ? 'python.exe' : 'python3')
+  const pythonCommand = voiceRuntimeLaunch().command
   const processState = text(runtime.state, 32) || 'stopped'
   const bridgePort = Number.isInteger(runtime.bridgePort) ? runtime.bridgePort : undefined
+  const environmentReady = existsSync(join(voiceRuntimeEnvironmentRoot(), 'ds-bot-environment.json'))
   return {
-    status: bundledRuntime && processState !== 'error' ? 'pass' : 'error',
+    status: bundledRuntime && environmentReady && ['listening', 'speaking', 'paused'].includes(processState) ? 'pass' : 'error',
     bundledRuntime,
     pythonCommand,
     processState,
+    environmentReady,
+    ...(runtime.stage ? { stage: statusCode(runtime.stage) } : {}),
+    ...(runtime.errorCode ? { errorCode: statusCode(runtime.errorCode) } : {}),
     ...(bridgePort === undefined ? {} : { bridgePort }),
     ...(runtime.lastError ? { lastError: text(runtime.lastError, 2000) } : {}),
     ...(runtime.lastOutput ? { lastOutput: text(runtime.lastOutput, 2000) } : {}),
@@ -313,6 +452,9 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
       wakeName: profileValue(bot, 'wakeName', bot.name), ttsVoice: profileValue(bot, 'ttsVoice', config.ttsVoice) })),
     runtime: {
       state: runtime.state,
+      ...(runtime.stage ? { stage: statusCode(runtime.stage) } : {}),
+      ...(runtime.errorCode ? { errorCode: statusCode(runtime.errorCode) } : {}),
+      ...(runtime.lastResult ? { lastResult: statusCode(runtime.lastResult) } : {}),
       ...(Number.isInteger(runtime.pid) ? { pid: runtime.pid } : {}),
       ...(Number.isInteger(runtime.bridgePort) ? { bridgePort: runtime.bridgePort } : {}),
       ...(runtime.error ? { error: text(runtime.error, 300) } : {}),
@@ -338,10 +480,24 @@ export async function submitPhoneAgentInput(rt, { botId, text: rawText, speaker 
   return { accepted: true, botId: bot.id, sessionId }
 }
 
-class RuntimeManager {
-  constructor(rt) {
+const runtimeFailure = code => ({
+  python_312_required: 'Install Python 3.12 for this Windows account, then retry. DS Bot prepares its own voice environment.',
+  dependency_install_failed: 'Voice dependency installation failed. Check the network connection and free disk space, then retry.',
+  dependency_import_failed: 'Voice dependencies could not load. Retry to repair the DS Bot voice environment.',
+  dependency_conflict: 'Voice dependencies are incompatible. Retry to repair the DS Bot voice environment.',
+  environment_setup_failed: 'The DS Bot voice environment could not be prepared. Check available disk space and retry.',
+  tts_config_migration_failed: 'The TTS configuration could not be imported. Choose a configuration file with a TTS_API_KEY, then retry.',
+  startup_timeout: 'Voice startup timed out. Check the reported stage and model or audio settings, then retry.',
+  runtime_exited: 'The voice runtime stopped unexpectedly. Check the reported stage and settings, then retry.',
+}[code] ?? `Voice runtime failed (${code}). Check the reported stage and settings, then retry.`)
+
+export class RuntimeManager {
+  constructor(rt, { spawnProcess = spawn, createBridge = options => new VoiceBridgeServer(options) } = {}) {
     this.rt = rt
+    this.spawnProcess = spawnProcess
+    this.createBridge = createBridge
     this.child = null
+    this.preparation = null
     this.bridge = null
     this.state = 'stopped'
     this.error = ''
@@ -350,11 +506,21 @@ class RuntimeManager {
     this.activeBotId = ''
     this.wakeSessionId = ''
     this.activityEpoch = randomUUID()
+    this.generation = 0
+    this.stage = ''
+    this.errorCode = ''
+    this.lastResult = ''
+    this.runtimeReady = false
+    this.starting = false
+    this.timeout = null
   }
 
   view() {
     return {
       state: this.state,
+      ...(this.stage ? { stage: this.stage } : {}),
+      ...(this.errorCode ? { errorCode: this.errorCode } : {}),
+      ...(this.lastResult ? { lastResult: this.lastResult } : {}),
       ...(this.child?.pid ? { pid: this.child.pid } : {}),
       ...(this.bridge?.view?.().port ? { bridgePort: this.bridge.view().port } : {}),
       ...(this.error ? { error: this.error } : {}),
@@ -366,13 +532,105 @@ class RuntimeManager {
   }
 
   async start(config) {
-    if (this.child) return this.view()
+    if (this.state === 'error' && (this.child || this.preparation)) await this.stop()
+    if (this.child || this.preparation || this.starting) return this.view()
+    const generation = ++this.generation
+    this.starting = true
+    this.runtimeReady = false
     this.state = 'starting'
+    this.stage = 'environment_checking'
     this.error = ''
+    this.errorCode = ''
     this.lastError = ''
     this.lastOutput = ''
+    this.lastResult = ''
+    this.activeBotId = ''
+    this.wakeSessionId = ''
+    this.activityEpoch = randomUUID()
+    this.setTimeout(15 * 60_000, generation)
+    try { config = migratePhoneAgentOwnedConfig(config) }
+    catch { this.fail('tts_config_migration_failed', generation); return this.view() }
+    if (config.ttsConfigPath && resolve(config.ttsConfigPath) !== resolve(voiceRuntimeEnvironmentRoot(), '..', 'voice-runtime-private', '.env.tts')) {
+      this.fail('tts_config_migration_failed', generation)
+      return this.view()
+    }
+    try {
+      const launch = voiceRuntimePreparationLaunch()
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: launch.cwd, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['ignore', 'pipe', 'pipe'] })
+      this.preparation = child
+      this.watchOutput(child, generation, false)
+      child.on('error', () => this.fail('python_312_required', generation))
+      child.on('close', code => {
+        if (generation !== this.generation || this.preparation !== child) return
+        this.preparation = null
+        if (code !== 0) { this.fail(this.errorCode || 'environment_setup_failed', generation); return }
+        void this.launchRuntime(config, generation).catch(() => this.fail('runtime_exited', generation))
+      })
+    } catch { this.fail('python_312_required', generation) }
+    return this.view()
+  }
+
+  setTimeout(milliseconds, generation) {
+    clearTimeout(this.timeout)
+    this.timeout = setTimeout(() => this.fail('startup_timeout', generation), milliseconds)
+    this.timeout.unref?.()
+  }
+
+  watchOutput(child, generation, runtime) {
+    const parser = createPhoneAgentRuntimeParser((change, type) => {
+      if (generation !== this.generation) return
+      if (type === 'runtime.ready' && runtime) {
+        this.runtimeReady = true
+        this.starting = false
+        clearTimeout(this.timeout)
+      } else if (change.state && change.state !== 'error' && (!runtime || !this.runtimeReady)) {
+        delete change.state
+      }
+      Object.assign(this, change)
+      if (this.errorCode) this.error = runtimeFailure(this.errorCode)
+    })
+    child.stdout?.on('data', data => {
+      if (generation !== this.generation) return
+      parser.write(data)
+      this.lastOutput = parser.output()
+    })
+    child.stderr?.on('data', () => {
+      if (generation === this.generation) this.lastError = 'The speech provider wrote diagnostic output. Structured status and error codes are shown above.'
+    })
+  }
+
+  killProcess(child) {
+    if (!child || child.killed) return
+    // The preparer can own pip/model subprocesses. Stop its complete Windows tree.
+    if (process.platform === 'win32' && Number.isInteger(child.pid)) {
+      const killer = this.spawnProcess('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' })
+      killer.on('error', () => child.kill())
+    } else child.kill()
+  }
+
+  fail(code, generation) {
+    if (generation !== this.generation) return
+    ++this.generation
+    clearTimeout(this.timeout)
+    this.starting = false
+    this.state = 'error'
+    this.errorCode = code
+    this.error = runtimeFailure(code)
+    this.killProcess(this.preparation)
+    this.killProcess(this.child)
+    this.preparation = null
+    this.child = null
+    const bridge = this.bridge
+    this.bridge = null
+    void bridge?.stop?.()
+  }
+
+  async launchRuntime(config, generation) {
+    if (generation !== this.generation) return
+    this.stage = 'bridge_connecting'
+    this.setTimeout(120_000, generation)
     const credential = randomUUID()
-    const bridge = new VoiceBridgeServer({
+    const bridge = this.createBridge({
       rt: this.rt,
       deviceId: config.deviceId,
       credential,
@@ -381,13 +639,17 @@ class RuntimeManager {
     })
     try {
       const bridgeView = await bridge.start({ host: '127.0.0.1', port: 0 })
+      if (generation !== this.generation) { await bridge.stop(); return }
       const launch = voiceRuntimeLaunch(config)
       const environment = {
         ...process.env,
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
         DS_BOT_BRIDGE_URL: `ws://127.0.0.1:${bridgeView.port}`,
         DS_BOT_BRIDGE_CREDENTIAL: credential,
         DS_BOT_DEVICE_ID: config.deviceId,
         DS_BOT_TARGET_ID: config.targetId,
+        DS_BOT_CONTINUATION_CONFIG: voiceRuntimeContinuationConfigPath(),
         DS_BOT_VOICE_CONFIG: JSON.stringify({
           ...config,
           runtimeRoot: undefined,
@@ -395,49 +657,29 @@ class RuntimeManager {
           configPath: undefined,
         }),
       }
-      const child = spawn(launch.command, launch.args, { cwd: launch.cwd, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = this.spawnProcess(launch.command, launch.args, { cwd: launch.cwd, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
       this.bridge = bridge
       this.child = child
-      child.stdout?.on('data', data => {
-        for (const line of String(data).split(/\r?\n/).map(line => line.trim()).filter(Boolean)) {
-          Object.assign(this, phoneAgentRuntimeEvent(line))
-        }
-        this.lastOutput = appendPhoneAgentOutput(this.lastOutput, data)
-      })
-      child.stderr?.on('data', data => {
-        this.lastError = `${this.lastError}${String(data)}`.slice(-2000).trim()
-      })
-      child.on('error', error => {
-        this.state = 'error'
-        this.error = error.message.slice(0, 300)
-        this.child = null
-        void this.bridge?.stop()
-        this.bridge = null
-      })
-      child.on('exit', (code, signal) => {
-        if (this.child === child) this.child = null
-        if (this.state !== 'stopped') {
-          this.state = code === 0 ? 'stopped' : 'error'
-          this.error = code === 0 ? '' : `DS Bot voice runtime exited (${code ?? signal ?? 'unknown'})`
-          void this.bridge?.stop()
-          this.bridge = null
-        }
-      })
-      this.state = 'ready'
-      return this.view()
-    } catch (error) {
+      this.stage = 'runtime_starting'
+      this.watchOutput(child, generation, true)
+      child.on('error', () => this.fail('runtime_launch_failed', generation))
+      child.on('close', () => this.fail(this.errorCode || 'runtime_exited', generation))
+    } catch {
       await bridge.stop().catch(() => {})
-      this.state = 'error'
-      this.error = error?.message?.slice(0, 300) || String(error).slice(0, 300)
-      return this.view()
+      this.fail('bridge_start_failed', generation)
     }
   }
 
   async stop() {
+    ++this.generation
+    clearTimeout(this.timeout)
     const child = this.child
-    this.state = 'stopped'; this.error = ''
+    this.state = 'stopped'; this.error = ''; this.errorCode = ''; this.stage = ''; this.lastResult = ''
+    this.starting = false; this.runtimeReady = false; this.activeBotId = ''; this.wakeSessionId = ''
     this.child = null
-    if (child && !child.killed) child.kill()
+    this.killProcess(child)
+    this.killProcess(this.preparation)
+    this.preparation = null
     const bridge = this.bridge
     this.bridge = null
     await bridge?.stop?.()
@@ -455,7 +697,17 @@ export function install(rt) {
   const imported = desktop ? existingRuntimeDefaults() : {}
   const applyImportedDefaults = () => {
     state.prefs ??= {}
-    const next = normalizePhoneAgentConfig(mergePhoneAgentDefaults(state.prefs.phoneAgent, imported))
+    let current = state.prefs.phoneAgent
+    if (desktop) {
+      try { current = migratePhoneAgentContinuationConfig(current) } catch { /* the runtime reports unavailable private settings */ }
+    }
+    const normalized = normalizePhoneAgentConfig(mergePhoneAgentDefaults(current, imported))
+    let next = normalized
+    if (desktop) {
+      // A private-file failure belongs to the voice plugin, not host startup.
+      // The manager reports it when the enabled plugin starts.
+      try { next = migratePhoneAgentOwnedConfig(normalized) } catch { /* retain the source for a retry */ }
+    }
     if (JSON.stringify(next) === JSON.stringify(state.prefs.phoneAgent)) return false
     state.prefs.phoneAgent = next
     return true
@@ -477,19 +729,20 @@ export function install(rt) {
     return () => { stopped = true }
   }, 'ds-bot: Phone Agent runtime defaults')
   const manager = new RuntimeManager(rt)
+  rt.phoneAgentStateSaved = () => manager.rolesChanged()
   rt.ctx.on('session/event', (session, event) => manager.sessionEvent(session, event))
   const save = async () => { applyImportedDefaults(); await rt.save(); return phoneAgentView(state, manager.view()) }
   const phoneAgent = () => { applyImportedDefaults(); return phoneAgentView(state, manager.view()) }
   const phoneAgentUpdate = async body => {
     applyImportedDefaults()
-    const wasRunning = Boolean(manager.child)
+    const wasRunning = Boolean(manager.child || manager.preparation || manager.starting)
     if (body?.config !== undefined) state.prefs.phoneAgent = normalizePhoneAgentConfig({ ...state.prefs.phoneAgent, ...body.config })
     if (body?.botId !== undefined) updatePhoneAgentProfile(state, String(body.botId), body.profile ?? {})
     await save()
     manager.rolesChanged()
     if (!state.prefs.phoneAgent.enabled) await manager.stop()
-    else if (wasRunning) {
-      await manager.stop()
+    else if (process.env.DS_BOT_APP === '1') {
+      if (wasRunning) await manager.stop()
       await manager.start(state.prefs.phoneAgent)
     }
     return phoneAgent()

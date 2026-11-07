@@ -145,17 +145,31 @@ export function PhoneAgentSettings({ actions }) {
     catch (failure) { setError(failure.message) }
     finally { setBusy(false) }
   }
-  if (draft === null) return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent') }, h('p', { role: 'status' }, t('Loading…')))
+  if (draft === null) return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent') }, h('p', { role: error ? 'alert' : 'status' }, error ? hostText(error) : t('Loading…')))
   const configField = (key, label, type = 'text') => h('label', { className: 'bt-phone-field' }, h('span', null, t(label)), h('input', { className: 'bt-input', type, value: draft.config[key] ?? '', onChange: event => setDraft(current => ({ ...current, config: { ...current.config, [key]: type === 'checkbox' ? event.target.checked : event.target.value } })) }))
   const runtime = value?.runtime ?? { state: 'stopped' }
   const diagnostics = value?.diagnostics
+  const stageLabels = {
+    environment_checking: 'Checking voice environment', environment_creating: 'Creating voice environment',
+    environment_installing: 'Installing voice dependencies', environment_verifying: 'Verifying voice dependencies', environment_ready: 'Voice environment ready',
+    environment_setup: 'Preparing voice environment', bridge_connecting: 'Connecting voice service', runtime_starting: 'Starting voice runtime',
+    models_loading: 'Loading speech models', asr_loading: 'Loading speech recognition', speaker_loading: 'Loading owner verification',
+    vad_loading: 'Loading speech detection', audio_opening: 'Opening Windows audio', listening: 'Waiting for wake word',
+    capturing: 'Receiving speech', asr: 'Recognizing speech', owner_verification: 'Verifying owner', continuation: 'Checking continuation',
+    synthesizing: 'Generating speech', speaking: 'Playing reply',
+  }
   return h('section', { className: 'bt-phone-agent', 'aria-label': t('Phone Agent'), 'aria-busy': busy },
     h('div', { className: 'bt-preset-heading' }, h('div', null, h('h2', null, t('Phone Agent')), h('p', null, t('Windows voice runtime for Bot wake words and speech.'))),
       runtime.state === 'stopped' || runtime.state === 'error'
-        ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent started') }, t('Start'))
+        ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStart, 'Phone Agent starting') }, runtime.state === 'error' ? t('Retry') : t('Start'))
         : h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentStop, 'Phone Agent stopped') }, t('Stop'))),
     h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.enabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t('Enable voice plugin')),
-    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })), runtime.activeBotId ? h('p', null, t('Active Bot: {bot}', { bot: (value?.bots ?? []).find(bot => bot.id === runtime.activeBotId)?.name ?? runtime.activeBotId })) : null, runtime.error ? h('p', null, runtime.error) : null,
+    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, t('Runtime: {state}', { state: runtime.state })),
+      runtime.stage ? h('p', null, t('Stage: {stage}', { stage: t(stageLabels[runtime.stage] ?? runtime.stage) })) : null,
+      runtime.activeBotId ? h('p', null, t('Active Bot: {bot}', { bot: (value?.bots ?? []).find(bot => bot.id === runtime.activeBotId)?.name ?? runtime.activeBotId })) : null,
+      runtime.lastResult ? h('p', null, t('Last speech result: {result}', { result: runtime.lastResult })) : null,
+      runtime.error ? h('p', null, runtime.error) : null,
+      runtime.errorCode ? h('p', null, t('Error code: {code}', { code: runtime.errorCode })) : null,
       runtime.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastError) : null,
       runtime.lastOutput ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastOutput) : null),
     h('section', { className: 'bt-phone-card' }, h('h3', null, t('Runtime diagnostics')),

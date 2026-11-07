@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -19,6 +20,10 @@ import numpy as np
 from bridge_client import BridgeClient, BridgeEvent
 from wake_mapping import WakeMapping
 from windows_adapter import WindowsDeviceAdapter
+from speech_capture import PcmSegmenter, load_vad
+from speech_models import SpeechFailure, load_speech_models
+from voice_input import VoiceInput
+from voice_output import VoiceOutput
 
 
 def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
@@ -137,9 +142,13 @@ class WindowsPcmPlayback:
         self.device_name = device_name
         self._stream = None
         self.sample_rate = 16000
+        self.processing = None
+        self._generation = 0
 
     async def start(self):
         if os.name != "nt":
+            return
+        if self._stream is not None:
             return
         try:
             import sounddevice as sd
@@ -162,12 +171,32 @@ class WindowsPcmPlayback:
             raise RuntimeError("Windows audio output could not be opened") from error
 
     async def play(self, chunk: bytes):
-        if self._stream is not None:
-            await asyncio.to_thread(self._stream.write, resample_pcm16(chunk, 16000, self.sample_rate))
+        stream, generation = self._stream, self._generation
+        if stream is not None:
+            for offset in range(0, len(chunk), 3200):
+                if self._stream is not stream or generation != self._generation:
+                    return
+                part = chunk[offset:offset + 3200]
+                if self.processing is not None:
+                    self.processing.render(part)
+                await asyncio.to_thread(stream.write, resample_pcm16(part, 16000, self.sample_rate))
 
     async def stop(self):
-        if self._stream is not None:
-            await asyncio.to_thread(self._stream.stop)
+        self._generation += 1
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            await asyncio.to_thread(stream.abort)
+            await asyncio.to_thread(stream.close)
+
+    async def drain(self):
+        stream = self._stream
+        if stream is not None:
+            try:
+                await asyncio.to_thread(stream.stop)
+            finally:
+                if self._stream is stream:
+                    self._stream = None
+                await asyncio.to_thread(stream.close)
 
     async def close(self):
         if self._stream is not None:
@@ -258,6 +287,7 @@ class WindowsWakeRuntime:
         self.on_wake = on_wake
         self.capture = WindowsPcmCapture(str(config.get("inputDeviceName", "")))
         detector_config = {
+            "active_role_wake_enabled": True,
             "windows_wake_model_dir": config.get("windowsWakeModelDir", ""),
             "windows_wake_keywords_score": config.get("windowsWakeKeywordsScore", 1.5),
             "windows_wake_keywords_threshold": config.get("windowsWakeKeywordsThreshold", .35),
@@ -265,6 +295,8 @@ class WindowsWakeRuntime:
         }
         self.detector = WindowsWakeDetector(detector_config, mapping)
         self._closed = False
+        self.on_pcm = self.on_gap = None
+        self.processing = None
 
     async def start(self):
         """Open the microphone before the host reports the runtime as ready."""
@@ -279,10 +311,17 @@ class WindowsWakeRuntime:
         samples = 0
         peak = 0
         next_report = 0.0
+        last_dropped = 0
         try:
             while not self._closed:
                 chunk = await self.capture.next_chunk()
                 pcm = resample_pcm16(chunk, self.capture.sample_rate, 16000)
+                if self.capture.dropped_chunks != last_dropped:
+                    last_dropped = self.capture.dropped_chunks
+                    if self.on_gap:
+                        self.on_gap()
+                if self.processing is not None:
+                    pcm = self.processing.capture(pcm)
                 values = np.frombuffer(pcm, dtype="<i2")
                 frames += 1
                 samples += len(values)
@@ -295,6 +334,10 @@ class WindowsWakeRuntime:
                         result = self.on_wake(payload)
                         if hasattr(result, "__await__"):
                             await result
+                # Do not feed the wake-word chunk into the command segment.
+                # The next microphone chunk begins the post-wake utterance.
+                if self.on_pcm is not None and not hits:
+                    self.on_pcm(pcm)
                 now = time.monotonic()
                 if now >= next_report:
                     print(json.dumps({"type": "windows.wake.audio", "frames": frames,
@@ -313,133 +356,224 @@ class WindowsWakeRuntime:
 
 
 class VoiceRuntime:
-    def __init__(self, bridge, tts, playback, *, device=None, config=None):
-        self.bridge = bridge
-        self.tts = tts
-        self.playback = playback
-        self.device = device
-        self.config = dict(config or {})
-        self.roles = None
-        self.mapping = None
-        self.responses: dict[str, dict] = {}
-        self.state = "stopped"
+    def __init__(self, bridge, tts, playback, *, device=None, config=None,
+                 models=None, vad=None, continuation_evaluator=None):
+        self.bridge, self.tts, self.playback = bridge, tts, playback
+        self.device, self.config = device, dict(config or {})
+        self.models, self.vad = models, vad
+        self.evaluator = continuation_evaluator
+        self.input = self.segmenter = self.processing = None
+        self.roles = self.mapping = None
+        self.state, self.active_bot_id = "stopped", None
+        self.wake_runtime = self.wake_task = None
+        self._controls = set()
+        self._wake_confirmation = None
+        self._closing = False
+        self.output = VoiceOutput(
+            bridge, tts, playback,
+            owns=lambda correlation: self.input.owns_output(correlation) if self.input else True,
+            generated=lambda c, text: self.input.reply_generated(c, text) if self.input else None,
+            finished=lambda c, text: self.input.reply_finished(c, text) if self.input else None,
+            notify=self.record)
+        self.output.aborted = lambda c, reason='output_aborted': self.input.abort_input(c, reason=reason) if self.input else None
+
+    def record(self, kind, **fields):
+        if kind in ("runtime.state", "runtime.ready") and fields.get("state"):
+            self.state = fields["state"]
+        if kind == "runtime.wake":
+            self.active_bot_id = fields.get("bot_id")
+        print(json.dumps({"type": kind, **fields}, ensure_ascii=False), flush=True)
+
+    def _spawn(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._controls.add(task)
+        def finished(value):
+            self._controls.discard(value)
+            if not value.cancelled() and value.exception() is not None and not self._closing:
+                self.record("runtime.state", state="error", stage="bridge",
+                            error_code="voice_control_failed")
+        task.add_done_callback(finished)
+        return task
+
+    def _roles_changed(self, payload):
+        if payload == self.roles:
+            return
+        self.roles = payload
         self.active_bot_id = None
-        self.wake_runtime = None
-        self.wake_task = None
+        if self.input:
+            self.input.invalidate()
+        if self.segmenter:
+            self.segmenter.reset()
+        if self._closing:
+            return
+        self._spawn(self.output.interrupt())
+        if payload is None:
+            self.mapping = WakeMapping("disconnected", {})
+            self.record("runtime.state", state="paused", stage="bridge_reconnecting",
+                        error_code="bridge_disconnected")
+        else:
+            self.mapping = WakeMapping.from_roster(payload)
+            source = getattr(getattr(self.models, "transcribe", None), "__self__", None)
+            if source is not None and hasattr(source, "hotwords"):
+                source.hotwords = self.mapping.all_names()
+        detector = getattr(self.wake_runtime, "detector", None)
+        if detector is not None:
+            try:
+                detector.update_mapping(self.mapping)
+            except (ValueError, RuntimeError):
+                self.record("runtime.state", state="error", stage="wake_mapping",
+                            error_code="unsupported_wake_names")
+
+    def _make_evaluator(self):
+        if self.evaluator is not None or not self.config.get("continuationEnabled", True):
+            return
+        if self.config.get("continuationUrl"):
+            from continuation_http import ContinuationHttpEvaluator
+            self.evaluator = ContinuationHttpEvaluator(
+                self.config["continuationUrl"], model=self.config.get("continuationModel", ""),
+                mode=self.config.get("continuationMode", "legacy_nli"),
+                timeout=self.config.get("continuationTimeout", 2.),
+                api_key=os.environ.get("DS_BOT_CONTINUATION_API_KEY"))
+        else:
+            from continuation_service import ManagedContinuationEvaluator
+            path = os.environ.get("DS_BOT_CONTINUATION_CONFIG", "")
+            if not path:
+                raise SpeechFailure("continuation_not_configured")
+            self.evaluator = ManagedContinuationEvaluator(
+                path, timeout=self.config.get("continuationTimeout", 2.))
 
     async def start(self):
+        self.state = "starting"
+        self.bridge.on_roles_changed = self._roles_changed
         if self.device is not None:
             self.device.connect()
+        self.record("runtime.progress", stage="bridge_connecting")
         await self.bridge.connect()
         roles_event = await self.bridge.subscribe_roles()
         self.roles = roles_event.payload if isinstance(roles_event, BridgeEvent) else roles_event
         self.mapping = WakeMapping.from_roster(self.roles)
-        await self.playback.start()
         if self.config.get("windowsWakeEnabled", self.config.get("wakeEnabled", False)):
+            self.record("runtime.progress", stage="models_loading")
+            if self.models is None:
+                self.models = await asyncio.to_thread(load_speech_models, self.config, self.mapping.all_names())
+            self._make_evaluator()
+            self.record("runtime.progress", stage="vad_loading")
+            if self.vad is None:
+                # LiveKit plugin registration must happen on the event-loop thread.
+                self.vad = load_vad()
+            self.segmenter = PcmSegmenter(self.vad, notify=self._audio_event)
+            if isinstance(self.playback, WindowsPcmPlayback):
+                from audio_processing import WindowsAudioProcessing
+                self.processing = WindowsAudioProcessing()
+                self.playback.processing = self.processing
+            self.input = VoiceInput(
+                self.bridge, self.models, config=self.config, evaluator=self.evaluator,
+                notify=self.record, interrupt=self.output.interrupt, clarify=self._clarify)
+            self.record("runtime.progress", stage="audio_opening")
             self.wake_runtime = WindowsWakeRuntime(self.config, self.mapping, self._on_wake)
+            self.wake_runtime.on_pcm, self.wake_runtime.on_gap = self._on_pcm, self._audio_gap
+            self.wake_runtime.processing = self.processing
             await self.wake_runtime.start()
             self.wake_task = asyncio.create_task(self.wake_runtime.run())
-        self.state = "listening"
-        print(json.dumps({"type": "runtime.ready", "state": self.state,
-                          "roles": list(self.mapping.roles)}, ensure_ascii=False), flush=True)
+        await self.playback.start()
+        self.record("runtime.ready", state="listening", stage="listening")
         return self.roles
 
-    async def stop(self):
-        self.state = "stopped"
-        if self.wake_runtime is not None:
-            await self.wake_runtime.close()
-        if self.wake_task is not None:
-            self.wake_task.cancel()
-            await asyncio.gather(self.wake_task, return_exceptions=True)
-            self.wake_task = None
-            self.wake_runtime = None
-        await self.playback.stop()
-        await self.playback.close() if hasattr(self.playback, "close") else asyncio.sleep(0)
-        await self.bridge.close()
-        if self.device is not None:
-            self.device.disconnect()
+    def _audio_event(self, kind, **fields):
+        if self.input and self.input.lease:
+            self.record(kind, **fields)
+            if kind == "audio.segment.started":
+                self.record("runtime.state", state="listening", stage="capturing",
+                            result="processing", error_code="")
+
+    def _audio_gap(self):
+        if self.segmenter:
+            self.segmenter.reset()
+        if self.input:
+            self.input.invalidate()
+        self._spawn(self.output.interrupt())
+        self.record("runtime.state", state="listening", stage="waiting_for_wake",
+                    result="audio_gap", error_code="audio_gap")
+
+    def _on_pcm(self, pcm):
+        if self.segmenter:
+            for segment in self.segmenter.feed(pcm, now=time.monotonic()):
+                self.input.offer(segment)
 
     async def _on_wake(self, payload):
-        self.active_bot_id = payload.get("bot_id")
-        publisher = getattr(self.bridge, "publish_wake", None)
-        if callable(publisher):
-            await publisher(payload)
-        print(json.dumps({"type": "runtime.wake", "bot_id": self.active_bot_id,
-                          "wake_session_id": payload.get("wake_session_id")}, ensure_ascii=False), flush=True)
+        if self.input is None:
+            # Standalone protocol diagnostics never create verified Bot input.
+            publisher = getattr(self.bridge, "publish_wake", None)
+            if callable(publisher):
+                await publisher(payload)
+            self.record("runtime.wake", bot_id=payload.get("bot_id"),
+                        wake_session_id=payload.get("wake_session_id"))
+            return
+        if not self.roles:
+            return
+        if self.segmenter:
+            self.segmenter.reset()
+        if self.input:
+            self.input.invalidate()
+        await self.output.interrupt()
+        lease = self.input.stage_wake(payload, self.roles)
+        if lease:
+            if self._wake_confirmation and not self._wake_confirmation.done():
+                self._wake_confirmation.cancel()
+            self._wake_confirmation = self._spawn(self.input.confirm_wake(lease, payload))
 
-    async def submit_transcript(self, text: str, *, bot_id: str, score: float = 1.0):
-        return await self.bridge.submit(text, bot_id=bot_id,
-                                        speaker={"status": "owner_verified", "score": score})
+    async def _clarify(self, text, bot_id):
+        role = next((item for item in (self.roles or {}).get("roles", []) if item["bot_id"] == bot_id), {})
+        await self.output.say(text, voice=role.get("tts_voice") or self.config.get("ttsVoice"))
 
-    async def handle_event(self, event: BridgeEvent | dict):
+    async def handle_event(self, event):
         value = event.raw if isinstance(event, BridgeEvent) else event
-        event_type = value.get("type")
-        correlation = value.get("correlation") or {}
-        payload = value.get("payload") or {}
-        if event_type == "roles.snapshot.result" or event_type == "roles.changed":
-            self.roles = payload
-            self.mapping = WakeMapping.from_roster(payload)
-            if self.wake_runtime is not None:
-                await self.wake_runtime.close()
-                if self.wake_task is not None:
-                    self.wake_task.cancel()
-                    await asyncio.gather(self.wake_task, return_exceptions=True)
-                self.wake_runtime = WindowsWakeRuntime(self.config, self.mapping, self._on_wake)
-                await self.wake_runtime.start()
-                self.wake_task = asyncio.create_task(self.wake_runtime.run())
-            return
-        if event_type == "output.started":
-            response_id = correlation.get("response_id")
-            if response_id:
-                self.responses[response_id] = {"voice": payload.get("tts_voice")}
-            self.state = "speaking"
-            return
-        if event_type == "output.segment":
-            response_id = correlation.get("response_id")
-            if not response_id or response_id not in self.responses:
-                return
-            text = payload.get("speak_text")
-            if not isinstance(text, str) or not text.strip():
-                return
-            voice = payload.get("tts_voice") or self.responses[response_id].get("voice")
-            async for chunk in self.tts.synthesize_stream(text, voice=voice):
-                await self.playback.play(chunk)
-            if isinstance(event, BridgeEvent):
-                await self.bridge.progress(event)
-            return
-        if event_type == "output.ended":
-            response_id = correlation.get("response_id")
-            if response_id:
-                self.responses.pop(response_id, None)
-            self.state = "listening"
+        if value.get("type") in ("roles.snapshot.result", "roles.changed"):
+            self._roles_changed(value.get("payload"))
+        elif value.get("type", "").startswith("output."):
+            await self.output.handle(event)
+        elif value.get("type") == "bridge.error":
+            self.record("runtime.state", state="listening", stage="bridge",
+                        error_code="bridge_request_rejected")
 
-    def handle_event_sync(self, value: dict):
-        asyncio.run(self.handle_event(value))
+    async def _reconnect(self):
+        self._roles_changed(None)
+        await self.output.interrupt()
+        while not self._closing:
+            if self.wake_task and self.wake_task.done():
+                self.wake_task.result()
+                raise RuntimeError("Windows wake runtime stopped unexpectedly")
+            try:
+                await self.bridge.reconnect()
+                roles = await self.bridge.subscribe_roles()
+                self._roles_changed(roles.payload)
+                self.record("runtime.state", state="listening", stage="waiting_for_wake",
+                            result="bridge_reconnected", error_code="")
+                return
+            except (ConnectionError, OSError, TimeoutError):
+                await asyncio.sleep(1.)
 
     async def run(self):
         await self.start()
         bridge_task = None
         try:
-            while True:
+            while not self._closing:
                 bridge_task = asyncio.create_task(self.bridge.next_event())
                 waiters = {bridge_task}
-                wake_task = self.wake_task
-                if wake_task is not None:
-                    waiters.add(wake_task)
+                if self.wake_task:
+                    waiters.add(self.wake_task)
                 done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
-                if wake_task is not None and wake_task in done:
-                    if not wake_task.cancelled():
-                        error = wake_task.exception()
-                        if error is not None:
-                            raise error
+                if self.wake_task in done:
+                    self.wake_task.result()
                     if self.state != "stopped":
                         raise RuntimeError("Windows wake runtime stopped unexpectedly")
                     return
                 try:
                     event = bridge_task.result()
                 except asyncio.TimeoutError:
-                    # An idle voice session is healthy. Keep the Bridge connection
-                    # alive until it reports a real protocol or transport error.
+                    continue
+                except ConnectionError:
+                    await self._reconnect()
                     continue
                 await self.handle_event(event)
         finally:
@@ -447,14 +581,43 @@ class VoiceRuntime:
                 bridge_task.cancel()
                 await asyncio.gather(bridge_task, return_exceptions=True)
 
+    async def stop(self):
+        self._closing = True
+        self.state = "stopped"
+        if self.input:
+            await self.input.close()
+        for task in list(self._controls):
+            task.cancel()
+        await asyncio.gather(*list(self._controls), return_exceptions=True)
+        await self.output.close()
+        if self.wake_task:
+            self.wake_task.cancel()
+            await asyncio.gather(self.wake_task, return_exceptions=True)
+        if self.wake_runtime:
+            await self.wake_runtime.close()
+        await self.playback.stop()
+        closer = getattr(self.playback, "close", None)
+        if closer:
+            await closer()
+        await self.bridge.close()
+        if self.evaluator and hasattr(self.evaluator, "aclose"):
+            await self.evaluator.aclose()
+        if self.device:
+            self.device.disconnect()
 
 def make_tts(config: Mapping[str, object]):
     config_path = config.get("ttsConfigPath")
     if not isinstance(config_path, str) or not config_path.strip():
-        return NullTTS()
+        raise SpeechFailure('tts_not_configured')
     from retained_tts import RetainedTTS
 
-    return RetainedTTS(config_path)
+    try:
+        result = RetainedTTS(config_path)
+    except (OSError, ValueError):
+        raise SpeechFailure('tts_configuration_invalid') from None
+    result.voice = str(config.get('ttsVoice') or result.voice)
+    result.model = str(config.get('ttsModel') or result.model)
+    return result
 
 
 async def run(config: Mapping[str, object]):
@@ -470,13 +633,23 @@ async def run(config: Mapping[str, object]):
 
 
 def main():
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path)
     args = parser.parse_args()
     config = runtime_config_from_env()
     if args.config:
         config.update(json.loads(args.config.read_text(encoding="utf-8")))
-    asyncio.run(run(config))
+    try:
+        asyncio.run(run(config))
+    except KeyboardInterrupt:
+        pass
+    except Exception as error:
+        code = str(error) if isinstance(error, SpeechFailure) else 'voice_runtime_failed'
+        print(json.dumps({'type': 'runtime.state', 'state': 'error', 'stage': 'startup',
+                          'error_code': code}), flush=True)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

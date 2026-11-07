@@ -47,6 +47,30 @@ var ZH = {
   "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
   "Runtime: {state}": "运行状态：{state}",
   "Active Bot: {bot}": "当前 Bot：{bot}",
+  "Stage: {stage}": "当前阶段：{stage}",
+  "Error code: {code}": "错误代码：{code}",
+  "Last speech result: {result}": "最近语音结果：{result}",
+  "Phone Agent starting": "正在启动 Phone Agent",
+  "Checking voice environment": "正在检查语音环境",
+  "Creating voice environment": "正在创建语音环境",
+  "Installing voice dependencies": "正在安装语音依赖",
+  "Verifying voice dependencies": "正在验证语音依赖",
+  "Voice environment ready": "语音环境已就绪",
+  "Preparing voice environment": "正在准备语音环境",
+  "Connecting voice service": "正在连接语音服务",
+  "Starting voice runtime": "正在启动语音运行时",
+  "Loading speech models": "正在加载语音模型",
+  "Loading speech recognition": "正在加载语音识别",
+  "Loading owner verification": "正在加载主人声纹校验",
+  "Loading speech detection": "正在加载语音检测",
+  "Opening Windows audio": "正在打开 Windows 音频",
+  "Waiting for wake word": "正在等待唤醒词",
+  "Receiving speech": "正在接收语音",
+  "Recognizing speech": "正在识别语音",
+  "Verifying owner": "正在校验主人声纹",
+  "Checking continuation": "正在判断连续对话",
+  "Generating speech": "正在生成语音",
+  "Playing reply": "正在播放回复",
   "Enable voice plugin": "启用语音插件",
   "Runtime diagnostics": "运行诊断",
   "Run self-test": "运行自检",
@@ -15363,10 +15387,32 @@ function PhoneAgentSettings({ actions }) {
       setBusy(false);
     }
   };
-  if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-phone-agent", "aria-label": t("Phone Agent") }, (0, import_react34.createElement)("p", { role: "status" }, t("Loading…")));
+  if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-phone-agent", "aria-label": t("Phone Agent") }, (0, import_react34.createElement)("p", { role: error ? "alert" : "status" }, error ? hostText(error) : t("Loading…")));
   const configField = (key, label, type = "text") => (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, t(label)), (0, import_react34.createElement)("input", { className: "bt-input", type, value: draft.config[key] ?? "", onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, [key]: type === "checkbox" ? event.target.checked : event.target.value } })) }));
   const runtime = value?.runtime ?? { state: "stopped" };
   const diagnostics = value?.diagnostics;
+  const stageLabels = {
+    environment_checking: "Checking voice environment",
+    environment_creating: "Creating voice environment",
+    environment_installing: "Installing voice dependencies",
+    environment_verifying: "Verifying voice dependencies",
+    environment_ready: "Voice environment ready",
+    environment_setup: "Preparing voice environment",
+    bridge_connecting: "Connecting voice service",
+    runtime_starting: "Starting voice runtime",
+    models_loading: "Loading speech models",
+    asr_loading: "Loading speech recognition",
+    speaker_loading: "Loading owner verification",
+    vad_loading: "Loading speech detection",
+    audio_opening: "Opening Windows audio",
+    listening: "Waiting for wake word",
+    capturing: "Receiving speech",
+    asr: "Recognizing speech",
+    owner_verification: "Verifying owner",
+    continuation: "Checking continuation",
+    synthesizing: "Generating speech",
+    speaking: "Playing reply"
+  };
   return (0, import_react34.createElement)(
     "section",
     { className: "bt-phone-agent", "aria-label": t("Phone Agent"), "aria-busy": busy },
@@ -15374,15 +15420,18 @@ function PhoneAgentSettings({ actions }) {
       "div",
       { className: "bt-preset-heading" },
       (0, import_react34.createElement)("div", null, (0, import_react34.createElement)("h2", null, t("Phone Agent")), (0, import_react34.createElement)("p", null, t("Windows voice runtime for Bot wake words and speech."))),
-      runtime.state === "stopped" || runtime.state === "error" ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStart, "Phone Agent started") }, t("Start")) : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStop, "Phone Agent stopped") }, t("Stop"))
+      runtime.state === "stopped" || runtime.state === "error" ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStart, "Phone Agent starting") }, runtime.state === "error" ? t("Retry") : t("Start")) : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentStop, "Phone Agent stopped") }, t("Stop"))
     ),
     (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.config.enabled !== false, onChange: (event) => setDraft((current) => ({ ...current, config: { ...current.config, enabled: event.target.checked } })) }), t("Enable voice plugin")),
     (0, import_react34.createElement)(
       "div",
       { className: "bt-plugin-report", role: "status" },
       (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })),
+      runtime.stage ? (0, import_react34.createElement)("p", null, t("Stage: {stage}", { stage: t(stageLabels[runtime.stage] ?? runtime.stage) })) : null,
       runtime.activeBotId ? (0, import_react34.createElement)("p", null, t("Active Bot: {bot}", { bot: (value?.bots ?? []).find((bot) => bot.id === runtime.activeBotId)?.name ?? runtime.activeBotId })) : null,
+      runtime.lastResult ? (0, import_react34.createElement)("p", null, t("Last speech result: {result}", { result: runtime.lastResult })) : null,
       runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null,
+      runtime.errorCode ? (0, import_react34.createElement)("p", null, t("Error code: {code}", { code: runtime.errorCode })) : null,
       runtime.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastError) : null,
       runtime.lastOutput ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastOutput) : null
     ),

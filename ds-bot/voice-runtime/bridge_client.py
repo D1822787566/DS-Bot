@@ -61,6 +61,9 @@ class BridgeClient:
         self.sent_inputs = set()
         self.roles = None
         self.on_roles_changed = None
+        self._active_wake = None
+        self._invalidation_pending = False
+        self._wake_attempt = 0
 
     async def __aenter__(self):
         return self
@@ -106,6 +109,7 @@ class BridgeClient:
             await self.send('bridge.hello', {}, {'client_version': '0.1', 'channel': self.channel, 'target_id': self.target_id})
             ready = self._incoming(json.loads(await asyncio.wait_for(self._socket.recv(), 10)))
             self.ready_event = ready
+            self._invalidation_pending = True
             self._reader = asyncio.create_task(self._read())
             return ready
         except BaseException:
@@ -136,13 +140,14 @@ class BridgeClient:
 
     async def _read(self):
         error = ConnectionError('Bridge disconnected')
+        socket = self._socket
         try:
-            async for raw in self._socket:
+            async for raw in socket:
                 event = self._incoming(json.loads(raw))
                 roster_event = event.type in ('roles.snapshot.result', 'roles.changed')
                 if roster_event:
                     self._apply_roles(event.payload)
-                if event.type == 'run.ended' or (event.type == 'input.status.result' and event.payload['status'] not in ('queued', 'running', 'unknown')):
+                if event.type in ('run.ended', 'input.rejected') or (event.type == 'input.status.result' and event.payload.get('status') not in ('queued', 'running', 'unknown')):
                     self.sent_inputs.discard(event.correlation.get('input_id'))
                 matched = False
                 for predicate, future in list(self._waiters):
@@ -160,16 +165,17 @@ class BridgeClient:
         except Exception as cause:
             error = BridgeProtocolError(str(cause)) if isinstance(cause, BridgeProtocolError) else ConnectionError('Bridge disconnected')
         finally:
+            self.binding = None
+            self.ready_event = None
             self._clear_roles()
             for _, future in self._waiters:
                 if not future.done():
                     future.set_exception(error)
             # Fail closed even when the consumer is slower than the transport.
-            while self._events.full():
+            while not self._events.empty():
                 self._events.get_nowait()
             self._events.put_nowait(error)
-            if self._socket:
-                await self._socket.close()
+            await socket.close()
 
     async def next_event(self, timeout=130):
         value = await asyncio.wait_for(self._events.get(), timeout)
@@ -178,17 +184,24 @@ class BridgeClient:
         return value
 
     async def _request(self, event_type, correlation, payload, predicate):
+        if len(self._waiters) >= 64:
+            raise BridgeProtocolError('request_backpressure')
         future = asyncio.get_running_loop().create_future()
-        waiter = (predicate, future)
+        waiter = (lambda event: predicate(event) or (event.type == 'bridge.error'
+            and all(event.correlation.get(key) == value for key, value in correlation.items())), future)
         self._waiters.append(waiter)
         try:
             await self.send(event_type, correlation, payload)
-            return await asyncio.wait_for(future, 10)
+            event = await asyncio.wait_for(future, 10)
+            if event.type == 'bridge.error':
+                raise BridgeProtocolError(event.payload.get('error_code', 'bridge_error'))
+            return event
         finally:
             self._waiters.remove(waiter)
 
-    async def submit(self, text, *, speaker=None, input_id=None, bot_id=None):
-        if not text.strip():
+    async def submit(self, text, *, speaker=None, input_id=None, bot_id=None,
+                     wake_session_id=None, session_id=None, generation=None, segment_id=None):
+        if not isinstance(text, str) or not text.strip():
             raise ValueError('final transcript must contain text')
         if self.channel == 'voice' and (not speaker or speaker.get('status') != 'owner_verified'):
             raise ValueError('current segment requires owner verification')
@@ -202,6 +215,18 @@ class BridgeClient:
             payload['bot_id'] = bot_id
         if speaker is not None:
             payload['speaker'] = dict(speaker)
+        ownership = {'wake_session_id': wake_session_id, 'session_id': session_id,
+                     'generation': generation, 'segment_id': segment_id}
+        if any(value is not None for value in ownership.values()):
+            wake = self._active_wake
+            valid_segment = ((type(segment_id) is int and segment_id > 0)
+                             or (isinstance(segment_id, str) and bool(segment_id.strip())))
+            if (not wake or self.binding is None or wake_session_id != wake['wake_session_id']
+                    or bot_id != wake['bot_id'] or session_id != wake.get('session_id')
+                    or type(generation) is not int or generation < 0 or generation != wake.get('generation')
+                    or not valid_segment):
+                raise ValueError('input requires the current accepted wake/session/generation')
+            payload.update(ownership)
         return await self._request('input.submit', {'input_id': input_id}, payload,
                                    lambda e: e.type in ('input.accepted', 'input.rejected', 'input.status.result')
                                    and e.correlation.get('input_id') == input_id)
@@ -214,10 +239,26 @@ class BridgeClient:
         mapping_version = payload.get('wake_mapping_version')
         if not all(isinstance(value, str) and value.strip() for value in (wake_session_id, bot_id, mapping_version)):
             raise ValueError('invalid wake payload')
-        return await self.send('device.wake', {'wake_session_id': wake_session_id}, {
+        generation = payload.get('generation')
+        if generation is not None and (type(generation) is not int or generation < 0):
+            raise ValueError('invalid wake generation')
+        value = {
             'wake_session_id': wake_session_id, 'bot_id': bot_id,
             'wake_mapping_version': mapping_version,
-        })
+            **({'generation': generation} if generation is not None else {}),
+        }
+        self._active_wake = None
+        self._wake_attempt += 1
+        attempt = self._wake_attempt
+        binding, roles = self.binding, self.roles
+        accepted = await self._request('device.wake', {'wake_session_id': wake_session_id}, value,
+            lambda event: event.type == 'device.wake.accepted'
+            and event.correlation.get('wake_session_id') == wake_session_id)
+        if (attempt != self._wake_attempt or self.binding != binding or self.roles is not roles
+                or any(accepted.payload.get(key) != item for key, item in value.items())):
+            raise BridgeProtocolError('invalid_wake_acceptance')
+        self._active_wake = dict(accepted.payload)
+        return accepted
 
     async def context_snapshot(self, bot_id, user_id='owner', *, dialogue_active=False,
                                recent_reply=None):
@@ -236,8 +277,11 @@ class BridgeClient:
                                    lambda e: e.type == 'input.status.result' and e.correlation.get('input_id') == input_id)
 
     def _clear_roles(self):
+        notify = self.roles is not None or self._invalidation_pending
         self.roles = None
-        if self.on_roles_changed:
+        self._active_wake = None
+        self._invalidation_pending = False
+        if notify and self.on_roles_changed:
             self.on_roles_changed(None)
 
     def _apply_roles(self, value):
@@ -249,6 +293,7 @@ class BridgeClient:
                 raise BridgeProtocolError('role_revision_reused')
             return
         self.roles = value
+        self._active_wake = None
         if self.on_roles_changed:
             self.on_roles_changed(value)
 
@@ -258,6 +303,8 @@ class BridgeClient:
             lambda e: e.type == 'roles.snapshot.result' and e.correlation.get('request_id') == request_id)
 
     async def cancel(self, scope, identifier):
+        if scope not in ('input', 'run', 'output'):
+            raise ValueError('invalid cancellation scope')
         correlation = {scope + '_id': identifier}
         if scope == 'output':
             correlation = {'response_id': identifier, 'target_id': self.target_id}

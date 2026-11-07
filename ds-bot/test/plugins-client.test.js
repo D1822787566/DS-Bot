@@ -120,6 +120,18 @@ test('Phone Agent settings shows the Bot selected by a wake event', async t => {
   assert.match(document.body.textContent, /Active Bot: 华子/)
 })
 
+test('Phone Agent settings restores startup stage and actionable failure from the host', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: {
+      state: 'error', stage: 'environment_installing', errorCode: 'dependency_install_failed', lastResult: 'owner_rejected',
+    } }),
+  } })
+  assert.match(document.body.textContent, /Installing voice dependencies/)
+  assert.match(document.body.textContent, /dependency_install_failed/)
+  assert.match(document.body.textContent, /Retry/)
+  assert.match(document.body.textContent, /owner_rejected/)
+})
+
 test('the Bot extension checks presets without drawing a second market or claiming plugin ownership', async t => {
   const calls = []
   const document = await mount(t, BotPresets, { actions: {

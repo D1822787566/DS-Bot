@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+import math
 
 from continuation_input import ContinuationTurn
 from voice_addressing import ContextSnapshot
@@ -78,6 +79,7 @@ class WakeSessionManager:
         self._current: WakeSession | None = None
         self._inflight: dict[str, _InflightInput] = {}
         self._turn_order: dict[str, int] = {}
+        self._audio_deadline = 0.
 
     @property
     def current(self) -> WakeSession | None:
@@ -231,9 +233,29 @@ class WakeSessionManager:
         if session is None:
             return 0.
         if session.phase is not SessionPhase.CONTEXT_GATED:
-            return session.expires_at
-        return max(session.expires_at,
+            return max(session.expires_at, self._audio_deadline)
+        return max(session.expires_at, self._audio_deadline,
                    max((item.deadline for item in self._inflight.values()), default=0.))
+
+    def hold_audio(self, *, started_at: float, ended_at: float, now: float,
+                   processing_timeout: float = 25.) -> bool:
+        """Finish one bounded utterance that began inside the original window.
+
+        This temporary hold covers VAD/inference latency, not idle listening.
+        Releasing a rejected utterance restores the original expiry.
+        """
+        session = self._current
+        if (session is None or not all(math.isfinite(v) for v in
+                (started_at, ended_at, now, processing_timeout))
+                or processing_timeout <= 0 or started_at > ended_at
+                or ended_at < session.opened_at - .5 or ended_at > now + .5
+                or ended_at - started_at > 31. or started_at >= self.deadline):
+            return False
+        self._audio_deadline = now + processing_timeout
+        return True
+
+    def release_audio(self) -> None:
+        self._audio_deadline = 0.
 
     def register_input(self, input_id: str, text: str, *, session_id: str,
                        bot_id: str) -> bool:
@@ -314,6 +336,7 @@ class WakeSessionManager:
 
     def close(self) -> None:
         self._current = None
+        self._audio_deadline = 0.
         self._inflight.clear()
         self._turn_order.clear()
 

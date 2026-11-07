@@ -71,6 +71,23 @@ Confirmed / Implementation in progress
 
 状态至少包括 `stopped`、`starting`、`ready`、`listening`、`speaking`、`paused`、`error`。保存失败、设备缺失、声纹未录入和运行时断线都显示明确错误。
 
+### 7.1 用户语音交互流程
+
+`[用户确认]` 首版交互按以下流程实施。这里描述目标行为；当前唤醒后的输入闭环尚未完成。
+
+1. 插件由 DS Bot 自动启动，进入 `listening`，等待设备上的任一 Bot 唤醒词。
+2. 用户说出某个 Bot 的唤醒词，例如“华子”。该唤醒词映射到对应的 `bot_id`，并打开一次 `wake_session_id`。
+3. 用户在唤醒后直接说需求，不需要重复说唤醒词。唤醒词本身不作为一条任务提交；首轮需求仍需通过主人声纹校验，但不需要语义续话模型再次判定是否对该 Bot 说话。
+4. VAD 结束语音段后，运行时并行执行 ASR 和主人声纹校验。只有非空转写、同一 `segment_id` 的主人声纹通过且 runtime generation 仍有效时，才发送 `input.submit`。
+5. `input.submit` 进入该 Bot 原有的 DS Bot 会话，沿用该 Bot 的模型、上下文、权限和审批。转写结果同时进入该 Bot 的文字聊天记录。
+6. DS Bot 以 `output.started`、`output.segment`、`output.ended` 回流回复；运行时按目标 Bot 的 TTS 音色合成并从 Windows 扬声器播放。
+7. 回复完成后的短时窗口内，用户可以继续追问，例如“再说具体一点”。每一段仍执行 ASR 和声纹校验，再由语义续话模型判断是否继续对当前 Bot 说话；未通过时不提交，窗口超时后需要重新唤醒。
+8. 用户说另一个 Bot 的唤醒词时，停止当前回复的音频播放并切换目标 Bot；旧 Bot 的后台任务不因插话自动取消。通过 DS Bot 现有的“停止任务”操作明确取消时，才取消 Bot 工作。
+
+设置页持续显示当前 Bot、当前阶段、最近一段语音的处理结果和失败原因；UI 只显示脱敏诊断，不显示原始 PCM、声纹文件或凭据。
+
+`[代码证据]` 迁入的 `wake_session.py` 默认首轮等待 8 秒、连续对话窗口 12 秒、澄清等待 5 秒；这些是当前实现默认值，后续接线沿用现有配置。语义不确定时复用 Phone Agent 的确认提示与超时处理，不将不确定、模型失败或关闭语义判断等同于准入通过。
+
 ## 8. 安全边界
 
 - 保护对象：LiveKit secret、Bridge credential、TTS credential、ASR/声纹模型路径和主人声纹资料。
@@ -106,11 +123,11 @@ Confirmed / Implementation in progress
 5. 将迁移后的 Python runtime、LiveKit 和 TTS worker 纳入 DS Bot 插件生命周期；开发版使用仓库内路径，打包版使用 app 资源路径。
 6. 重做设置页，只展示 DS Bot 管理的设备、ASR、TTS、LiveKit、声纹和续话配置；外部路径只用于一次性迁移，不作为运行时必填项。
 
-### 10.1 唤醒后的语音输入闭环（下一开发阶段）
+### 10.1 唤醒后的语音输入闭环（实现中）
 
 - `[代码证据]` 当前日志已经证明 KWS 唤醒成功：`keyword_results`、`valid_hits`、`device.wake` 和 `runtime.wake` 均已产生。
 - `[代码证据]` 当前日志没有 `input.submit`、`input.accepted`、`output.started` 或 `output.segment`；唤醒后的语音段、ASR、声纹和 Bot 提交尚未接通。
-- `[候选建议]` 下面的链路作为下一阶段实现清单；它们落实第 4 节已经确认的“语音转写进入对应 Bot 会话”和“默认主人声纹校验”，不新增供应商或新的权限边界。
+- `[用户确认]` 下面的链路是本轮确认后的实现清单；它们落实第 4 节已经确认的“语音转写进入对应 Bot 会话”和“默认主人声纹校验”，不新增供应商或新的权限边界。
 
 | 顺序 | 要接的模块 | 输入 | 输出与失败行为 |
 |---|---|---|---|
@@ -131,10 +148,25 @@ Confirmed / Implementation in progress
 
 #### 10.1.2 完成条件
 
-- `[候选建议]` 说出有效唤醒词后，用户继续说一句话，日志依次出现 `audio.segment.ended`、ASR 完成、声纹完成、`input.submit`、`input.accepted` 和回复输出事件。
-- `[候选建议]` 声纹失败时出现拒绝诊断，不产生 `input.submit`。
-- `[候选建议]` ASR 或模型依赖失败时出现明确错误，不会把空文本提交给 Bot。
-- `[候选建议]` Bot 切换、Bridge 重连或 runtime 停止后，旧语音段不能提交到旧 Bot/session。
+- `[用户确认]` 说出有效唤醒词后，用户继续说一句话，日志依次出现 `audio.segment.ended`、ASR 完成、声纹完成、`input.submit`、`input.accepted` 和回复输出事件。
+- `[用户确认]` 声纹失败时出现拒绝诊断，不产生 `input.submit`。
+- `[用户确认]` ASR 或模型依赖失败时出现明确错误，不会把空文本提交给 Bot。
+- `[用户确认]` Bot 切换、Bridge 重连或 runtime 停止后，旧语音段不能提交到旧 Bot/session。
+
+- `[代码证据]` 已实现 `speech_capture.py` 的有界 PCM/Silero VAD 分段、`speech_models.py` 的 Paraformer/CAM++ 并行推理与超时占位、`voice_input.py` 的首轮/连续对话准入、`voice_output.py` 的可打断 TTS 队列、`audio_processing.py` 的 Windows AEC 处理边界，以及 `main.py` 到这些组件的托管接线。
+- `[代码证据]` 已实现 DS Bot 自有 Python 3.12 环境准备、模型和 TTS 私有配置迁移、frozen 053 续话 provider 的 DS Bot 私有适配、Bridge wake/session/generation 隔离和 roster 变更刷新。
+- `[代码证据]` 固定 PCM、ASR/CAM++ fixture、续话服务、Bridge、环境准备和 Python runtime 测试已通过；真实模型 fixture 已验证主人语音转写/声纹通过，视频和 TTS 样本未通过主人声纹。
+- `[代码证据]` 当前 Windows 设备的配置麦克风 `C01` 和扬声器 `Philips SPA5308P` 已成功打开并关闭；私有 TTS provider 已成功合成短 PCM 流。该检查尚未替代 Desktop Bridge 端到端验收。
+- `[待完成]` 仍需在 DS Bot Desktop 中启动托管 runtime，验证真实 Windows 麦克风、主人声纹、TTS 网络回复、扬声器播放、Bot 切换和重连；这些物理设备验收未由自动化测试替代。
+
+### 10.2 开发条件核对
+
+- `[用户确认]` 需求范围、Python/Node 职责边界、插件托管启动、Bot 会话复用和第 7.1 节的交互流程已有确认，可以继续开发第 10.1 节，无需再确认主方案。
+- `[代码证据]` Windows 麦克风采集、Sherpa 唤醒和 `device.wake` Bridge 路由已有实现及运行日志；ASR/CAM++、短时会话和语义续话模块已有迁入源码，但尚未组成可验收的完整语音对话。
+- `[代码证据]` 当前默认 Windows Python 3.14 未安装 FunASR/Torch；外部 Phone Agent 的 Python 3.12 环境可导入这些依赖。开发时需要为 DS Bot 单独准备兼容环境，不能把外部项目虚拟环境作为正式运行依赖。
+- `[代码证据]` DS Bot 自有语音依赖已准备并通过 `pip check`、FunASR/Torch/Torchaudio/LiveKit/Silero/Sherpa 导入检查；固定 PCM、模型和 Bridge 测试已补齐失败、切换和迟到结果。
+- 后续工程工作：启动 Desktop 做真实 Windows 设备验收，并根据设备日志修复只在物理音频链路出现的问题。
+- 完成以上实现并通过第 13 节 Windows 真实麦克风和扬声器验收后，才能标记语音插件可用；“满足开发条件”和“验收通过”分别记录。
 
 ## 11. 影响范围
 
@@ -159,7 +191,7 @@ Confirmed / Implementation in progress
 
 - 修改对象：仓库内 Python runtime、LiveKit/TTS worker 启停和 app 资源分发。
 - 完成条件：不依赖 `E:\\project_space\\phone_agent`；DS Bot 可启动、停止、重启并回收迁移后的本地进程；缺少模型或设备时给出明确错误。
-- 下一执行顺序：先实现 10.1 的语音段采集和 VAD，再接 ASR/声纹 provider，最后接 `input.submit` 与现有回复回流。
+- 下一执行顺序：准备 DS Bot 自有且兼容 FunASR/Torch 的 Python 语音环境；实现 10.1 的语音段采集和 VAD，再接 ASR/声纹 provider，最后接 `input.submit`、现有回复回流和语义续话，并做 Windows 端到端验收。
 
 ### 步骤 4：设置 UI
 
@@ -228,7 +260,7 @@ Confirmed / Implementation in progress
 
 ## 18. 关联的 module-evolution 决策
 
-见 `docs/module-memory/phone-agent-voice-plugin.md`：D-PAVP-001 至 D-PAVP-019。
+见 `docs/module-memory/phone-agent-voice-plugin.md`：D-PAVP-001 至 D-PAVP-020。
 
 ## 19. 变更记录
 
@@ -237,3 +269,5 @@ Confirmed / Implementation in progress
 - 2026-11-07：开始按确认架构实现 DS Bot Host Bridge、仓库内 Python runtime 入口、托管子进程生命周期和设置页去外部路径化；随后接入 Windows 麦克风采集、WASAPI 端点选择和 Sherpa 唤醒检测，并把运行时 stdout 诊断显示到设置页；发现英文默认 Bot 名称不在当前中文 KWS 模型词表后改为跳过不支持的名称并保留可识别 Bot，避免一个配置阻塞整个 runtime；ASR、主人声纹、唤醒后的语音段提交和端到端播放验收仍未完成。
 - 2026-11-07：补齐 `device.wake` 的 DS Bot Bridge 路由和 `windows.wake.audio` 诊断，使唤醒候选可被 Host 确认并能区分“没有音频”“没有命中”和“未完成后续 ASR”三种状态。
 - 2026-11-07：根据运行日志补充“唤醒后的语音输入闭环”清单，明确下一阶段需要接入语音段采集、VAD、Paraformer/FunASR ASR、CAM++ 声纹、语音准入、`input.submit`、回复回流和可观测性；当前仍未把这些候选步骤标记为已完成。
+- 2026-11-07：用户确认首版 Bot 语音交互流程，补充第 7.1 节和开发条件核对；第 10.1 节从候选清单改为确认后的开发依据。依赖环境准备、唤醒后的输入闭环和 Windows 端到端验收仍待完成。
+- 2026-11-07：开始实现 10.1：迁入 DS Bot 自有 Python 3.12 依赖准备，接入有界 PCM/VAD、Paraformer/CAM++、主人声纹、wake/session/generation ownership、frozen 053 续话、TTS 队列/打断、Windows AEC 边界和 roster 刷新；固定测试和缓存音频模型验证通过，真实 Windows Desktop 设备验收待完成。

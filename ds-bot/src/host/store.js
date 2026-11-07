@@ -385,6 +385,7 @@ export function install(rt) {
         seen = stamp()
         rt.capabilitiesStateSaved?.()
         rt.stateSaved?.()
+        try { rt.phoneAgentStateSaved?.() } catch { /* voice roster refresh cannot fail a state save */ }
       } catch (error) {
         await unlink(temp).catch(() => {})
         throw error

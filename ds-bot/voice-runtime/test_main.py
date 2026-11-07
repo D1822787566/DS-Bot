@@ -8,6 +8,12 @@ from main import choose_input_device, choose_output_device, resample_pcm16, runt
 from bridge_client import BridgeEvent
 
 
+class IdleVad:
+    window_size_samples = 160
+    def reset(self): pass
+    def __call__(self, _samples): return 0.
+
+
 def test_runtime_reads_only_ds_bot_environment_contract():
     config = runtime_config_from_env({
         "DS_BOT_BRIDGE_URL": "ws://127.0.0.1:4321",
@@ -33,7 +39,7 @@ def test_runtime_maps_output_segments_to_tts_and_playback():
             return None
 
     class TTS:
-        async def synthesize_stream(self, text, *, voice):
+        async def synthesize_stream(self, text, cancellation_token=None, *, voice):
             yield text.encode()
 
     class Playback:
@@ -48,16 +54,20 @@ def test_runtime_maps_output_segments_to_tts_and_playback():
 
     playback = Playback()
     runtime = VoiceRuntime(Bridge(), TTS(), playback)
-    runtime.handle_event_sync({
-        "type": "output.started",
-        "correlation": {"response_id": "response-1"},
-        "payload": {"tts_voice": "voice-a"},
-    })
-    runtime.handle_event_sync({
-        "type": "output.segment",
-        "correlation": {"response_id": "response-1"},
-        "payload": {"speak_text": "你好", "tts_voice": "voice-a"},
-    })
+    async def run():
+        await runtime.handle_event({
+            "type": "output.started",
+            "correlation": {"response_id": "response-1"},
+            "payload": {"tts_voice": "voice-a"},
+        })
+        await runtime.handle_event({
+            "type": "output.segment",
+            "correlation": {"response_id": "response-1"},
+            "payload": {"speak_text": "你好", "tts_voice": "voice-a"},
+        })
+        await runtime.output.drain()
+        await runtime.output.close()
+    asyncio.run(run())
     assert playback.chunks == ["你好".encode()]
 
 
@@ -206,7 +216,8 @@ def test_runtime_surfaces_microphone_start_failure_before_ready(monkeypatch):
 
     monkeypatch.setattr(main, "WindowsWakeRuntime", BrokenWakeRuntime)
     runtime = VoiceRuntime(Bridge(), object(), Playback(),
-                           config={"windowsWakeEnabled": True})
+                           models=object(), vad=IdleVad(),
+                           config={"windowsWakeEnabled": True, "continuationEnabled": False})
     with pytest.raises(RuntimeError, match="microphone"):
         asyncio.run(runtime.start())
 
@@ -254,7 +265,8 @@ def test_runtime_propagates_background_wake_failure(monkeypatch):
 
     monkeypatch.setattr(main, "WindowsWakeRuntime", FailedWakeRuntime)
     runtime = VoiceRuntime(Bridge(), object(), Playback(),
-                           config={"windowsWakeEnabled": True})
+                           models=object(), vad=IdleVad(),
+                           config={"windowsWakeEnabled": True, "continuationEnabled": False})
     with pytest.raises(RuntimeError, match="wake decoder stopped"):
         asyncio.run(runtime.run())
 
@@ -276,3 +288,84 @@ def test_wake_candidate_is_published_to_the_ds_bot_bridge():
     asyncio.run(runtime._on_wake(payload))
     assert bridge.payload == payload
     assert runtime.active_bot_id == "b"
+
+
+def test_managed_runtime_connects_pcm_models_bridge_and_target_voice(monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+    from audio_adapter import OwnerDecision
+    from speech_models import SpeechModels
+
+    class Bridge:
+        on_roles_changed = None
+
+        def __init__(self):
+            self.sent = []
+
+        async def connect(self): pass
+
+        async def subscribe_roles(self):
+            return {'activity_epoch': 'epoch', 'revision': 1, 'roles': [{
+                'bot_id': 'b', 'session_id': 'chat-b', 'wake_names': ['华子'], 'profile_version': 1}]}
+
+        async def publish_wake(self, value):
+            return SimpleNamespace(type='device.wake.accepted', payload=value)
+
+        async def context_snapshot(self, bot_id, **kwargs):
+            return SimpleNamespace(payload={'bot_id': bot_id, 'user_id': 'owner', 'profile_version': 1})
+
+        async def submit(self, text, **kwargs):
+            self.sent.append({'text': text, **kwargs})
+            return SimpleNamespace(type='input.accepted', payload={'status': 'queued'})
+
+        async def progress(self, *args, **kwargs): pass
+        async def close(self): pass
+
+    class Playback:
+        def __init__(self): self.chunks = []
+        async def start(self): pass
+        async def stop(self): pass
+        async def close(self): pass
+        async def play(self, pcm): self.chunks.append(pcm)
+
+    class TTS:
+        def __init__(self): self.voices = []
+        async def synthesize_stream(self, text, cancellation_token=None, *, voice):
+            self.voices.append(voice)
+            yield b'\x00\x00' * 160
+
+    class Vad:
+        window_size_samples = 160
+        def reset(self): pass
+        def __call__(self, samples): return 1. if np.max(np.abs(samples)) > .01 else 0.
+
+    class Wake:
+        def __init__(self, *args): pass
+        async def start(self): pass
+        async def run(self): await asyncio.Event().wait()
+        async def close(self): pass
+
+    monkeypatch.setattr(main, 'WindowsWakeRuntime', Wake)
+
+    async def run():
+        bridge, tts, playback = Bridge(), TTS(), Playback()
+        models = SpeechModels(lambda _: '检查项目', lambda s: OwnerDecision('owner', .99, 'verified', s.segment_id, 'cam++', 'p'))
+        runtime = VoiceRuntime(bridge, tts, playback, models=models, vad=Vad(),
+                               config={'windowsWakeEnabled': True, 'continuationEnabled': False})
+        try:
+            await runtime.start()
+            await runtime._on_wake({'bot_id': 'b', 'wake_session_id': 'w', 'wake_mapping_version': 'epoch:1'})
+            runtime._on_pcm(np.full(16000, 4000, dtype='<i2').tobytes() + b'\x00\x00' * 16000)
+            await runtime.input.task
+            item = bridge.sent[0]
+            correlation = {key: item[key] for key in ('bot_id', 'session_id', 'input_id', 'wake_session_id', 'generation')}
+            correlation['response_id'] = 'r'
+            await runtime.handle_event({'type': 'output.started', 'correlation': correlation, 'payload': {'tts_voice': 'bot-voice'}})
+            await runtime.handle_event({'type': 'output.segment', 'correlation': correlation, 'payload': {'segment_index': 0, 'speak_text': '已检查'}})
+            await runtime.handle_event({'type': 'output.ended', 'correlation': correlation, 'payload': {'status': 'completed'}})
+            await runtime.output.drain()
+            assert item['text'] == '检查项目' and item['session_id'] == 'chat-b'
+            assert tts.voices == ['bot-voice'] and len(playback.chunks) == 1
+        finally:
+            await runtime.stop()
+    asyncio.run(run())

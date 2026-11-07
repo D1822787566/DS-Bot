@@ -3,6 +3,17 @@ import unittest
 from wake_session import SessionPhase, WakeSessionManager
 
 
+def test_audio_that_began_inside_the_window_can_finish_but_rejection_does_not_refresh_it():
+    manager = WakeSessionManager(first_turn_timeout=8.)
+    manager.open('w', 'b', now=100.)
+    assert manager.hold_audio(started_at=107., ended_at=112., now=112., processing_timeout=3.)
+    assert not manager.expire(now=113.)
+    manager.release_audio()
+    assert manager.expire(now=113.)
+    manager.open('w2', 'b', now=120.)
+    assert not manager.hold_audio(started_at=129., ended_at=130., now=130.)
+
+
 class WakeSessionManagerTests(unittest.TestCase):
     def test_tool_and_tts_wait_do_not_consume_the_post_reply_window(self):
         manager = WakeSessionManager()
