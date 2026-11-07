@@ -69,11 +69,12 @@
 - [代码证据] 运行日志显示唤醒链路已产生 `device.wake` / `runtime.wake`，但没有 `input.submit` 或回复输出；下一阶段需要按开发文档 10.1 接入唤醒后语音段、VAD、ASR、声纹和 Bridge submit。
 - [用户确认] 首版语音交互流程已确认并写入开发文档；真实 Windows 设备验收仍未完成，不能据此标记插件验收通过。
 - [代码证据] DS Bot 自有 Python 3.12 环境已准备在 `.ds-bot-local/voice-runtime-env`，通过 pip check 和 FunASR/Torch/Torchaudio/LiveKit/Silero/Sherpa 导入验证；运行时不依赖外部 Phone Agent 虚拟环境。
-- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `93 passed, 12 subtests passed`。
+- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `88 passed, 12 subtests passed`。
 - [现状重建] 已用真实缓存音频做模型验收：主人语音转写且声纹通过；视频和 TTS 样本声纹拒绝。尚未用真实麦克风和扬声器完成 Desktop 端到端验收。
 - [代码证据] 已在当前 Windows 设备打开并关闭配置的 `C01` 麦克风和 `扬声器 (Philips SPA5308P)`；已用私有 TTS 配置合成短 PCM 回复（3 个分片，23,040 字节）。这验证了设备打开和 provider 连接，尚未验证完整 Desktop Bridge 会话。
 - [代码证据] 已修复 Windows 播放链路的音质失真：此前每个约 100 ms 的 TTS 小块单独从 16 kHz 插值到输出采样率，块边界会重置插值状态；现在使用 LiveKit 高质量有状态重采样器，跨 provider chunk 保持状态，停止时丢弃尾部，正常结束时先 flush 再停止设备。新增 7 个播放回归测试覆盖 16/44.1/48 kHz、不同 chunk 边界和打断；Python 测试为 `93 passed, 12 subtests passed`。
 - [代码证据] 在用户反馈重采样修复后仍然沙哑后，已将 DS Bot 默认及当前 Windows Bot 配置从 `longshao_v3.1` 切换为已验证可用的 `longanlingxi_v3.1`；`qwen-audio-3.1-tts-flash` provider 直连合成和当前 48 kHz 扬声器播放均成功，应用已按新配置重启。音色是否主观清晰仍待用户复验。
+- [代码证据] 已确认迁移差异：Phone Agent 原版使用 LiveKit `MediaDevices`/`OutputPlayer`，以 16 kHz `AudioTrack` 交给 LiveKit 的原生输出重采样；DS Bot 迁移版此前使用 `sounddevice.RawOutputStream` 接收 TTS PCM，再自行做 16→48 kHz 重采样。当前已改回 LiveKit 原生输出边界，TTS PCM 以 16 kHz `AudioSource`/`LocalAudioTrack` 输入，Windows 输出仍由 `MediaDevices` 处理。新增 native track、打断和不 drain 回归测试；Python 测试为 `88 passed, 12 subtests passed`。
 
 ## 继续入口
 

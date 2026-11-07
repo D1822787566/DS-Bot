@@ -1,8 +1,8 @@
-"""Exercise the real resampler without opening an audio device."""
+"""Exercise the native LiveKit Windows output boundary without opening a device."""
 import asyncio
-import threading
+import sys
+from types import ModuleType, SimpleNamespace
 
-import numpy as np
 import pytest
 
 from main import WindowsPcmPlayback
@@ -27,60 +27,159 @@ class Stream:
         self.closed = True
 
 
-@pytest.mark.parametrize('rate', [16000, 44100, 48000])
-@pytest.mark.parametrize('chunk_samples', [367, 16049])
-def test_tts_playback_preserves_tone_and_duration_across_chunk_boundaries(rate, chunk_samples):
-    if rate != 16000:
-        pytest.importorskip('livekit.rtc')
-    count, frequency, amplitude = 16049, 1700, 12000
-    source = np.rint(amplitude * np.sin(np.arange(count) * 2 * np.pi * frequency / 16000)).astype('<i2').tobytes()
-    stream, playback = Stream(), WindowsPcmPlayback()
-    playback._stream, playback.sample_rate = stream, rate
+def test_playback_uses_livekit_native_track_resampling_at_the_16khz_tts_boundary(monkeypatch):
+    class Frame:
+        def __init__(self, data, sample_rate, num_channels, samples_per_channel):
+            self.data = bytes(data)
+            self.sample_rate = sample_rate
+            self.num_channels = num_channels
+            self.samples_per_channel = samples_per_channel
+
+    class Source:
+        def __init__(self, sample_rate, channels):
+            self.sample_rate, self.channels, self.frames = sample_rate, channels, []
+
+        async def capture_frame(self, frame):
+            self.frames.append(frame)
+
+        async def wait_for_playout(self):
+            return None
+
+        async def aclose(self):
+            return None
+
+    class Track:
+        @staticmethod
+        def create_audio_track(name, source):
+            return (name, source)
+
+    class Player:
+        def __init__(self):
+            self.tracks, self.started, self.closed = [], False, False
+
+        async def add_track(self, track):
+            self.tracks.append(track)
+
+        async def start(self):
+            self.started = True
+
+        async def aclose(self):
+            self.closed = True
+
+    class MediaDevices:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.player = Player()
+            self.__class__.instances.append(self)
+
+        def open_output(self, *, output_device):
+            self.output_device = output_device
+            return self.player
+
+    rtc = SimpleNamespace(AudioFrame=Frame, AudioSource=Source,
+                          LocalAudioTrack=Track, MediaDevices=MediaDevices)
+    livekit = ModuleType('livekit')
+    livekit.rtc = rtc
+    monkeypatch.setitem(sys.modules, 'livekit', livekit)
+    monkeypatch.setattr('main.os.name', 'nt')
+    sounddevice = SimpleNamespace(
+        default=SimpleNamespace(device=(1, 18)),
+        query_devices=lambda: [{'index': 18, 'name': 'speaker', 'max_output_channels': 2,
+                                'hostapi': 2, 'default_samplerate': 48000}],
+        query_hostapis=lambda: [{'name': 'Windows WASAPI'}],
+    )
+    monkeypatch.setitem(sys.modules, 'sounddevice', sounddevice)
+
+    playback = WindowsPcmPlayback('speaker')
 
     async def run():
-        for offset in range(0, len(source), chunk_samples * 2):
-            await playback.play(source[offset:offset + chunk_samples * 2])
+        await playback.start()
+        await playback.play(b'\x00\x01' * 1000)
         await playback.drain()
+
     asyncio.run(run())
-
-    result = np.frombuffer(b''.join(stream.writes), dtype='<i2').astype(float)
-    assert len(result) == round(count * rate / 16000)
-    assert all(len(part) <= rate // 10 * 2 for part in stream.writes)
-    expected = amplitude * np.sin(np.arange(len(result)) * 2 * np.pi * frequency / rate)
-    # Ignore only the filter's edge response. A phase reset at each write or
-    # provider chunk distorts this tone throughout the recording.
-    error = np.sqrt(np.mean((result[300:-300] - expected[300:-300]) ** 2))
-    assert error / amplitude < .001
-    assert stream.closed
+    media = MediaDevices.instances[0]
+    source = media.player.tracks[0][1]
+    assert media.kwargs == {'input_sample_rate': 48000, 'output_sample_rate': 48000, 'num_channels': 1}
+    assert media.output_device == 18
+    assert media.player.started is True
+    assert len(source.frames) == 4
+    assert all(frame.sample_rate == 16000 and frame.num_channels == 1 for frame in source.frames)
+    assert b''.join(frame.data for frame in source.frames) == b'\x00\x01' * 1000
 
 
-def test_interrupt_discards_unwritten_audio_and_resampler_tail():
-    pytest.importorskip('livekit.rtc')
-    started, release = threading.Event(), threading.Event()
+def test_interrupt_closes_native_player_without_draining_queued_audio(monkeypatch):
+    class Frame:
+        def __init__(self, data, sample_rate, num_channels, samples_per_channel):
+            self.data = bytes(data)
+            self.sample_rate = sample_rate
+            self.num_channels = num_channels
+            self.samples_per_channel = samples_per_channel
 
-    class BlockingStream(Stream):
-        def write(self, data):
-            self.writes.append(bytes(data))
-            started.set()
-            assert release.wait(2)
+    class Source:
+        def __init__(self, *_args):
+            self.frames, self.waits, self.closed = [], 0, False
 
-        def abort(self):
-            release.set()
+        async def capture_frame(self, frame):
+            self.frames.append(frame)
+
+        async def wait_for_playout(self):
+            self.waits += 1
+
+        async def aclose(self):
+            self.closed = True
+
+    class Player:
+        def __init__(self):
+            self.closed = False
+
+        async def add_track(self, _track):
+            return None
+
+        async def start(self):
+            return None
+
+        async def aclose(self):
+            self.closed = True
+
+    class MediaDevices:
+        latest = None
+
+        def __init__(self, **_kwargs):
+            self.player = Player()
+            self.__class__.latest = self
+
+        def open_output(self, *, output_device):
+            self.output_device = output_device
+            return self.player
+
+    class Track:
+        @staticmethod
+        def create_audio_track(_name, _source):
+            return object()
+
+    livekit = ModuleType('livekit')
+    livekit.rtc = SimpleNamespace(AudioFrame=Frame, AudioSource=Source,
+                                  LocalAudioTrack=Track, MediaDevices=MediaDevices)
+    monkeypatch.setitem(sys.modules, 'livekit', livekit)
+    monkeypatch.setattr('main.os.name', 'nt')
+    monkeypatch.setitem(sys.modules, 'sounddevice', SimpleNamespace(
+        default=SimpleNamespace(device=(1, 18)),
+        query_devices=lambda: [{'index': 18, 'name': 'speaker', 'max_output_channels': 2,
+                                'hostapi': 2, 'default_samplerate': 48000}],
+        query_hostapis=lambda: [{'name': 'Windows WASAPI'}],
+    ))
 
     async def run():
-        stream, playback = BlockingStream(), WindowsPcmPlayback()
-        playback._stream, playback.sample_rate = stream, 48000
-        task = asyncio.create_task(playback.play(b'\x00\x10' * 16000))
-        assert await asyncio.to_thread(started.wait, 2)
+        playback = WindowsPcmPlayback('speaker')
+        await playback.start()
+        await playback.play(b'\x00\x10' * 400)
+        media, source = MediaDevices.latest, playback._source
         await playback.stop()
-        await task
-        await playback.drain()
-        assert len(stream.writes) == 1
-        # Reusing the boundary for the next Bot must not flush the old filter.
-        fresh = Stream()
-        playback._stream = fresh
-        await playback.play(b'\x00\x00' * 800)
-        await playback.drain()
-        assert len(b''.join(fresh.writes)) == 800 * 3 * 2
-        assert np.max(np.abs(np.frombuffer(b''.join(fresh.writes), dtype='<i2'))) <= 1
+        await playback.play(b'\x00\x10' * 400)
+        assert source.closed and source.waits == 0
+        assert media.player.closed
+        assert playback._source is None
     asyncio.run(run())

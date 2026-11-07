@@ -140,19 +140,22 @@ class WindowsPcmPlayback:
 
     def __init__(self, device_name: str = ""):
         self.device_name = device_name
-        self._stream = None
+        self._media_devices = None
+        self._player = None
+        self._source = None
+        self._track = None
         self.sample_rate = 16000
         self.processing = None
         self._generation = 0
-        self._resampler = None
 
     async def start(self):
         if os.name != "nt":
             return
-        if self._stream is not None:
+        if self._player is not None:
             return
         try:
             import sounddevice as sd
+            from livekit import rtc
 
             default_index = None
             try:
@@ -165,64 +168,57 @@ class WindowsPcmPlayback:
             if selected is None and isinstance(index, int) and 0 <= index < len(devices):
                 selected = devices[index]
             self.sample_rate = max(1, round(float((selected or {}).get("default_samplerate", 16000))))
-            kwargs = {"samplerate": self.sample_rate, "channels": 1, "dtype": "int16", "device": index}
-            self._stream = sd.RawOutputStream(**kwargs)
-            self._stream.start()
+            media_devices = rtc.MediaDevices(
+                input_sample_rate=self.sample_rate,
+                output_sample_rate=self.sample_rate,
+                num_channels=1,
+            )
+            player = media_devices.open_output(output_device=index)
+            source = rtc.AudioSource(16000, 1)
+            track = rtc.LocalAudioTrack.create_audio_track("dsbot-tts", source)
+            await player.add_track(track)
+            await player.start()
+            self._media_devices = media_devices
+            self._player, self._source, self._track = player, source, track
         except Exception as error:
             raise RuntimeError("Windows audio output could not be opened") from error
 
     async def play(self, chunk: bytes):
-        stream, generation = self._stream, self._generation
-        if stream is not None:
+        source, generation = self._source, self._generation
+        if source is not None:
             if not isinstance(chunk, bytes) or len(chunk) % 2:
                 raise ValueError("PCM16 chunk must contain complete samples")
-            if self.sample_rate != 16000 and self._resampler is None:
-                from livekit import rtc
-                # Keep the filter and fractional sample position across both
-                # provider chunks and writes. Restarting interpolation every
-                # 100 ms distorts the waveform at each block boundary.
-                self._resampler = rtc.AudioResampler(
-                    16000, self.sample_rate, quality=rtc.AudioResamplerQuality.HIGH)
-            for offset in range(0, len(chunk), 3200):
-                if self._stream is not stream or generation != self._generation:
+            from livekit import rtc
+            for offset in range(0, len(chunk), 640):
+                if self._source is not source or generation != self._generation:
                     return
-                part = chunk[offset:offset + 3200]
-                if self.processing is not None:
-                    self.processing.render(part)
-                if self._resampler is not None:
-                    part = b''.join(bytes(frame.data) for frame in self._resampler.push(bytearray(part)))
-                await self._write(part, stream, generation)
-
-    async def _write(self, pcm, stream, generation):
-        block_bytes = max(2, self.sample_rate // 10 * 2)
-        for offset in range(0, len(pcm), block_bytes):
-            if self._stream is not stream or generation != self._generation:
-                return
-            await asyncio.to_thread(stream.write, pcm[offset:offset + block_bytes])
+                part = chunk[offset:offset + 640]
+                if not part:
+                    continue
+                await source.capture_frame(rtc.AudioFrame(
+                    data=part, sample_rate=16000, num_channels=1,
+                    samples_per_channel=len(part) // 2))
 
     async def stop(self):
         self._generation += 1
-        self._resampler = None  # Interrupted audio must never be flushed later.
-        stream, self._stream = self._stream, None
-        if stream is not None:
-            await asyncio.to_thread(stream.abort)
-            await asyncio.to_thread(stream.close)
+        player, source = self._player, self._source
+        self._media_devices = self._player = self._source = self._track = None
+        if source is not None:
+            await source.aclose()
+        if player is not None:
+            await player.aclose()
 
     async def drain(self):
-        stream, generation = self._stream, self._generation
-        if stream is not None:
-            resampler, self._resampler = self._resampler, None
-            if resampler is not None:
-                tail = b''.join(bytes(frame.data) for frame in resampler.flush())
-                await self._write(tail, stream, generation)
-            if self._stream is not stream or generation != self._generation:
-                return
-            try:
-                await asyncio.to_thread(stream.stop)
-            finally:
-                if self._stream is stream:
-                    self._stream = None
-                await asyncio.to_thread(stream.close)
+        player, source, generation = self._player, self._source, self._generation
+        if player is None or source is None:
+            return
+        await source.wait_for_playout()
+        if self._player is not player or generation != self._generation:
+            return
+        self._generation += 1
+        self._media_devices = self._player = self._source = self._track = None
+        await source.aclose()
+        await player.aclose()
 
     async def close(self):
         await self.stop()
