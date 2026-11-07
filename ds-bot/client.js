@@ -60,6 +60,7 @@ var ZH = {
   "Bridge": "Bridge",
   "Not connected": "未连接",
   "Last stderr": "最近错误输出",
+  "Last stdout": "最近运行输出",
   "Windows audio and LiveKit": "Windows 音频与 LiveKit",
   "Save settings": "保存设置",
   "ASR and TTS": "ASR 与 TTS",
@@ -15367,7 +15368,8 @@ function PhoneAgentSettings({ actions }) {
       { className: "bt-plugin-report", role: "status" },
       (0, import_react34.createElement)("strong", null, t("Runtime: {state}", { state: runtime.state })),
       runtime.error ? (0, import_react34.createElement)("p", null, runtime.error) : null,
-      runtime.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastError) : null
+      runtime.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastError) : null,
+      runtime.lastOutput ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, runtime.lastOutput) : null
     ),
     (0, import_react34.createElement)(
       "section",
@@ -15386,7 +15388,9 @@ function PhoneAgentSettings({ actions }) {
         (0, import_react34.createElement)("span", null, t("Bridge")),
         (0, import_react34.createElement)("code", null, diagnostics.bridgePort ? `127.0.0.1:${diagnostics.bridgePort}` : t("Not connected")),
         diagnostics.lastError ? (0, import_react34.createElement)("span", null, t("Last stderr")) : null,
-        diagnostics.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastError) : null
+        diagnostics.lastError ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastError) : null,
+        diagnostics.lastOutput ? (0, import_react34.createElement)("span", null, t("Last stdout")) : null,
+        diagnostics.lastOutput ? (0, import_react34.createElement)("pre", { className: "bt-phone-diagnostic" }, diagnostics.lastOutput) : null
       ) : null
     ),
     error ? (0, import_react34.createElement)("div", { className: "bt-error", role: "alert" }, hostText(error)) : null,

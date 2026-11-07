@@ -23,6 +23,7 @@ const ZH = {
   'Bridge': 'Bridge',
   'Not connected': '未连接',
   'Last stderr': '最近错误输出',
+  'Last stdout': '最近运行输出',
   'Windows audio and LiveKit': 'Windows 音频与 LiveKit',
   'Save settings': '保存设置',
   'ASR and TTS': 'ASR 与 TTS',

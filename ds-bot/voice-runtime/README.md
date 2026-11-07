@@ -12,9 +12,15 @@ values; session routing uses DS Bot `session_id` values.
 `main.py` is the managed entrypoint. DS Bot passes the Bridge URL, credential, device identity and
 non-secret voice configuration through `DS_BOT_*` environment variables. It opens the local
 Bridge, receives the DS Bot role roster, routes output segments to the configured TTS voice and
-plays PCM through the Windows output device. The migrated wake, ASR, owner verification and
-continuation adapters stay behind this process boundary; their live Windows capture wiring is
-the next acceptance step. A missing provider reports a runtime error without affecting text chat.
+plays PCM through the Windows output device. When Windows wake is enabled, it opens the selected
+microphone through PortAudio/WASAPI, resamples frames to 16 kHz and feeds the migrated Sherpa
+keyword detector. The process reports `windows.audio.input_ready` before `runtime.ready`; a
+microphone or wake-model failure terminates the voice runtime with diagnostics instead of
+claiming that it is listening. Wake names outside the model's Chinese pinyin vocabulary are
+reported as `windows.wake.unsupported_names` and do not prevent supported Bot wake names from
+starting. ASR, owner verification and continuation remain behind this process boundary and are
+wired in later acceptance steps. A missing provider reports a runtime error without affecting
+text chat.
 
 Install the runtime dependencies in the Python environment used by the DS Bot host:
 `requirements.txt`. No path under `E:/project_space/phone_agent` is read at runtime.

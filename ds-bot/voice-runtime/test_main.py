@@ -1,7 +1,10 @@
 import json
 import asyncio
+import sys
+import pytest
 
-from main import choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime
+import main
+from main import choose_input_device, choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime
 from bridge_client import BridgeEvent
 
 
@@ -13,12 +16,14 @@ def test_runtime_reads_only_ds_bot_environment_contract():
         "DS_BOT_TARGET_ID": "windows-1",
         "DS_BOT_VOICE_CONFIG": json.dumps({"ttsVoice": "voice-a"}),
     })
-    assert config == {
-        "bridge_url": "ws://127.0.0.1:4321",
-        "bridge_credential": "secret",
-        "device_id": "windows-1",
-        "target_id": "windows-1",
-        "ttsVoice": "voice-a",
+    assert config["bridge_url"] == "ws://127.0.0.1:4321"
+    assert config["bridge_credential"] == "secret"
+    assert config["device_id"] == "windows-1"
+    assert config["target_id"] == "windows-1"
+    assert config["ttsVoice"] == "voice-a"
+    assert set(config) <= {
+        "bridge_url", "bridge_credential", "device_id", "target_id",
+        "ttsVoice", "windowsWakeModelDir",
     }
 
 
@@ -101,6 +106,42 @@ def test_output_device_selection_prefers_wasapi_when_windows_names_are_duplicate
     assert choose_output_device(devices, hostapis, "扬声器 (Philips SPA5308P)") == 18
 
 
+def test_input_device_selection_prefers_wasapi_when_microphone_names_are_duplicated():
+    devices = [
+        {"name": "C01", "max_input_channels": 1, "hostapi": 0, "index": 1},
+        {"name": "C01", "max_input_channels": 1, "hostapi": 2, "index": 19},
+    ]
+    hostapis = [{"name": "MME"}, {"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
+    assert choose_input_device(devices, hostapis, "C01") == 19
+
+
+def test_microphone_open_failure_is_reported_as_a_runtime_error(monkeypatch):
+    class SoundDevice:
+        class Default:
+            device = (1, 5)
+
+        default = Default()
+
+        @staticmethod
+        def query_devices():
+            return [{"name": "C01", "max_input_channels": 1,
+                     "default_samplerate": 48000, "hostapi": 0, "index": 1}]
+
+        @staticmethod
+        def query_hostapis():
+            return [{"name": "Windows WASAPI"}]
+
+        class RawInputStream:
+            def __init__(self, **_kwargs):
+                raise OSError("device is busy")
+
+    monkeypatch.setattr(main.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "sounddevice", SoundDevice)
+    capture = main.WindowsPcmCapture("C01")
+    with pytest.raises(RuntimeError, match="Windows microphone could not be opened"):
+        asyncio.run(capture.start())
+
+
 def test_pcm_output_is_resampled_to_the_selected_windows_device_rate():
     source = b"\x00\x00\xff\x7f"
     result = resample_pcm16(source, 16000, 48000)
@@ -129,3 +170,90 @@ def test_idle_bridge_timeout_does_not_shutdown_the_runtime():
     except StopAsyncIteration:
         pass
     assert runtime.bridge.calls == 2
+
+
+def test_runtime_surfaces_microphone_start_failure_before_ready(monkeypatch):
+    class Bridge:
+        async def connect(self):
+            return None
+
+        async def subscribe_roles(self):
+            return {
+                "activity_epoch": "epoch", "revision": 1,
+                "roles": [{"bot_id": "b", "session_id": "session-b",
+                           "wake_names": ["小贝"], "profile_version": 1}],
+            }
+
+        async def close(self):
+            return None
+
+    class Playback:
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+        async def close(self):
+            return None
+
+    class BrokenWakeRuntime:
+        def __init__(self, *_args):
+            pass
+
+        async def start(self):
+            raise RuntimeError("Windows microphone could not be opened")
+
+    monkeypatch.setattr(main, "WindowsWakeRuntime", BrokenWakeRuntime)
+    runtime = VoiceRuntime(Bridge(), object(), Playback(),
+                           config={"windowsWakeEnabled": True})
+    with pytest.raises(RuntimeError, match="microphone"):
+        asyncio.run(runtime.start())
+
+
+def test_runtime_propagates_background_wake_failure(monkeypatch):
+    class Bridge:
+        async def connect(self):
+            return None
+
+        async def subscribe_roles(self):
+            return {
+                "activity_epoch": "epoch", "revision": 1,
+                "roles": [{"bot_id": "b", "session_id": "session-b",
+                           "wake_names": ["小贝"], "profile_version": 1}],
+            }
+
+        async def next_event(self):
+            await asyncio.sleep(10)
+
+        async def close(self):
+            return None
+
+    class Playback:
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+        async def close(self):
+            return None
+
+    class FailedWakeRuntime:
+        def __init__(self, *_args):
+            pass
+
+        async def start(self):
+            return None
+
+        async def run(self):
+            raise RuntimeError("wake decoder stopped")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(main, "WindowsWakeRuntime", FailedWakeRuntime)
+    runtime = VoiceRuntime(Bridge(), object(), Playback(),
+                           config={"windowsWakeEnabled": True})
+    with pytest.raises(RuntimeError, match="wake decoder stopped"):
+        asyncio.run(runtime.run())

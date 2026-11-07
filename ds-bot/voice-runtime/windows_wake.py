@@ -1,7 +1,8 @@
-"""Local acoustic candidates; Gateway alone validates and binds the target role.
+"""Local acoustic candidates; the Bridge alone binds the target role.
 
-The reader attaches to the already published MediaDevices/APM microphone track.
-It never opens an audio device or changes microphone publication/playback state.
+The detector is device-agnostic. The managed Windows runtime feeds it PCM from
+the selected microphone, while the legacy LiveKit adapter feeds it an audio
+track. It never changes microphone publication or playback state.
 """
 from __future__ import annotations
 
@@ -17,8 +18,6 @@ import time
 from uuid import uuid4
 
 import numpy as np
-from livekit import rtc
-
 from wake_mapping import WakeMapping
 
 
@@ -35,10 +34,15 @@ _MODEL_FILES = {
 class KeywordTable:
     keywords: str
     bot_by_keyword: dict[str, str]
+    unsupported: tuple[tuple[str, str], ...] = ()
 
 
-def build_keyword_table(mapping, tokens_path):
-    """Encode WenetSpeech partial pinyin, with no guessed aliases or OOV skips."""
+def build_keyword_table(mapping, tokens_path, *, strict=True):
+    """Encode WenetSpeech partial pinyin without guessed aliases.
+
+    Strict callers reject unsupported names. The runtime may keep supported Bot
+    names active while returning unsupported names in the table diagnostics.
+    """
     from pypinyin import pinyin
     from pypinyin.contrib.tone_convert import to_finals_tone, to_initials
 
@@ -49,19 +53,21 @@ def build_keyword_table(mapping, tokens_path):
     lines = []
     bots = {}
     pronunciations = {}
+    unsupported = []
     for bot_id, names in mapping.roles.items():
         for name in names:
             if re.fullmatch(r'[\u4e00-\u9fff]+', name) is None:
-                raise ValueError('unsupported_wake_name')
-            # Match sherpa_onnx.text2token(tokens_type='ppinyin'). Unlike that
-            # utility, reject the whole mapping if any configured name is OOV.
+                unsupported.append((bot_id, name))
+                continue
+            # Match sherpa_onnx.text2token(tokens_type='ppinyin').
             pieces = []
             for syllable in pinyin(name):
                 initial = to_initials(syllable[0], strict=False)
                 final = to_finals_tone(syllable[0], strict=False)
                 pieces.extend(piece for piece in (initial, final) if piece)
             if not pieces or any(piece not in vocabulary for piece in pieces):
-                raise ValueError('unsupported_wake_name')
+                unsupported.append((bot_id, name))
+                continue
             pronunciation = tuple(pieces)
             if pronunciation in pronunciations:
                 if pronunciations[pronunciation] != bot_id:
@@ -71,7 +77,11 @@ def build_keyword_table(mapping, tokens_path):
             keyword = f'wake_{len(lines)}'
             bots[keyword] = bot_id
             lines.append(f'{" ".join(pieces)} @{keyword}')
-    return KeywordTable('/'.join(lines), bots)
+    if strict and unsupported:
+        raise ValueError('unsupported_wake_name')
+    if not lines:
+        raise ValueError('unsupported_wake_name')
+    return KeywordTable('/'.join(lines), bots, tuple(unsupported))
 
 
 @dataclass(frozen=True)
@@ -97,10 +107,13 @@ class SpeechBoundary:
 
     def __init__(self, *, model=None):
         if model is None:
-            from livekit.plugins.silero import onnx_model
-            model = onnx_model.OnnxModel(
-                onnx_session=onnx_model.new_inference_session(force_cpu=True),
-                sample_rate=SAMPLE_RATE)
+            try:
+                from livekit.plugins.silero import onnx_model
+                model = onnx_model.OnnxModel(
+                    onnx_session=onnx_model.new_inference_session(force_cpu=True),
+                    sample_rate=SAMPLE_RATE)
+            except ImportError:
+                model = _EnergyBoundaryModel()
         self.model = model
         self.reset()
 
@@ -136,6 +149,19 @@ class SpeechBoundary:
         return ended
 
 
+class _EnergyBoundaryModel:
+    """Small dependency-free fallback used by the local sounddevice path."""
+
+    window_size_samples = 512
+
+    def reset(self):
+        return None
+
+    def __call__(self, samples):
+        values = np.asarray(samples, dtype=np.float32)
+        return float(np.sqrt(np.mean(values * values))) * 8.0
+
+
 class WindowsWakeDetector:
     """One serialized Sherpa model with versioned, replaceable keyword streams."""
 
@@ -165,12 +191,13 @@ class WindowsWakeDetector:
         self._diagnostic_valid_hits = 0
         self._diagnostic_cooldown_drops = 0
         self._diagnostic_unknown_keywords = 0
+        self._unsupported = ()
         self.closed = False
         self._allow_empty = config.get('active_role_wake_enabled', False) is True
         # Validate before calling the native constructor (some Sherpa invalid
         # configurations terminate the process rather than raising Python errors).
         if mapping.roles or not self._allow_empty:
-            build_keyword_table(mapping, self._paths['tokens'])
+            build_keyword_table(mapping, self._paths['tokens'], strict=False)
         if spotter is None:
             import sherpa_onnx
 
@@ -189,13 +216,20 @@ class WindowsWakeDetector:
         self.update_mapping(mapping)
 
     def process_frame(self, frame):
+        return self._process_samples(frame.data, frame.sample_rate, frame.num_channels)
+
+    def process_pcm16(self, data, sample_rate=SAMPLE_RATE, num_channels=1):
+        """Process a raw PCM16 microphone chunk without a LiveKit dependency."""
+        return self._process_samples(data, sample_rate, num_channels)
+
+    def _process_samples(self, data, sample_rate, num_channels):
         with self._lock:
             if self.closed or self._stream is None:
                 return ()
-            if frame.sample_rate != SAMPLE_RATE or frame.num_channels != 1:
+            if sample_rate != SAMPLE_RATE or num_channels != 1:
                 raise ValueError('wake_audio_format')
             self._diagnostic_frames += 1
-            samples = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32) / 32768.
+            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.
             self._stream.accept_waveform(SAMPLE_RATE, samples)
             hits = ()
             while self._spotter.is_ready(self._stream):
@@ -237,6 +271,7 @@ class WindowsWakeDetector:
                 'generation': self._generation,
                 'mapping_version': self._mapping.version if self._mapping else None,
                 'bot_ids': list(self._mapping.roles) if self._mapping else [],
+                'unsupported_wake_names': [list(item) for item in self._unsupported],
             }
 
     def event_for_hit(self, hit):
@@ -265,6 +300,7 @@ class WindowsWakeDetector:
             self._generation += 1
             self._stream = None
             self._table = None
+            self._unsupported = ()
             self._last_detection.clear()
             if mapping.version in self._used_versions and not self._allow_empty:
                 raise ValueError('wake_mapping_version_reused')
@@ -273,12 +309,13 @@ class WindowsWakeDetector:
                 self._used_versions.add(mapping.version)
                 self._boundary.reset()
                 return
-            table = build_keyword_table(mapping, self._paths['tokens'])
+            table = build_keyword_table(mapping, self._paths['tokens'], strict=False)
             stream = self._spotter.create_stream(table.keywords)
             self._mapping = WakeMapping(mapping.version, dict(mapping.roles))
             self._boundary.reset()
             self._used_versions.add(mapping.version)
             self._table = table
+            self._unsupported = table.unsupported
             self._stream = stream
 
     def close(self):
@@ -298,6 +335,7 @@ async def run_windows_wake(track, participant, detector):
     next_report = 0.
     last_boundary_count = 0
     try:
+        from livekit import rtc
         stream = rtc.AudioStream.from_track(track=track, sample_rate=SAMPLE_RATE,
                                            num_channels=1, capacity=50)
         async for event in stream:

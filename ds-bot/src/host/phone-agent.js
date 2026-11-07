@@ -14,6 +14,10 @@ const text = (value, max = 240) => typeof value === 'string' ? value.trim().slic
 const textOr = (value, fallback, max = 240) => text(value, max) || fallback
 const bool = (value, fallback) => typeof value === 'boolean' ? value : fallback
 const finite = (value, fallback, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
+export function appendPhoneAgentOutput(previous = '', chunk = '') {
+  const lines = `${previous || ''}\n${String(chunk)}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  return lines.join('\n').slice(-2000)
+}
 const id = (value, label) => {
   const result = text(value, 96)
   if (!ID.test(result)) throw new Error(`${label} must contain only letters, digits, dots, colons, underscores or hyphens`)
@@ -47,6 +51,11 @@ export function defaultPhoneAgentConfig() {
     clarificationTimeoutSeconds: 5,
     bargeInEnabled: true,
     wakeEnabled: true,
+    windowsWakeEnabled: true,
+    windowsWakeModelDir: '',
+    windowsWakeKeywordsScore: 1.5,
+    windowsWakeKeywordsThreshold: 0.35,
+    windowsWakeCooldownSeconds: 1,
     speakerVerificationEnabled: true,
     runtimeRoot: '',
     pythonPath: '',
@@ -61,6 +70,7 @@ const PHONE_AGENT_FIELDS = new Set([
   'continuationEnabled', 'continuationModel', 'continuationUrl', 'continuationTimeout',
   'wakeTimeout', 'continuationTimeoutSeconds', 'clarificationTimeoutSeconds',
   'bargeInEnabled', 'wakeEnabled', 'speakerVerificationEnabled', 'runtimeRoot', 'pythonPath', 'configPath',
+  'windowsWakeEnabled', 'windowsWakeModelDir', 'windowsWakeKeywordsScore', 'windowsWakeKeywordsThreshold', 'windowsWakeCooldownSeconds',
 ])
 
 export function mergePhoneAgentDefaults(current = {}, imported = {}) {
@@ -127,6 +137,11 @@ export function phoneAgentDefaultsFromRuntime(runtime = {}, desktop = {}, tts = 
     clarificationTimeoutSeconds: finite(runtime.wake_clarification_timeout, base.clarificationTimeoutSeconds, 1, 60),
     bargeInEnabled: bool(runtime.windows_barge_in_enabled, base.bargeInEnabled),
     wakeEnabled: bool(runtime.windows_wake_enabled, base.wakeEnabled),
+    windowsWakeEnabled: bool(runtime.windows_wake_enabled, base.windowsWakeEnabled),
+    windowsWakeModelDir: textOr(runtime.windows_wake_model_dir ?? process.env.DS_BOT_WAKE_MODEL_DIR ?? '', base.windowsWakeModelDir, 500),
+    windowsWakeKeywordsScore: finite(runtime.windows_wake_keywords_score, base.windowsWakeKeywordsScore, .01, 20),
+    windowsWakeKeywordsThreshold: finite(runtime.windows_wake_keywords_threshold, base.windowsWakeKeywordsThreshold, .01, 1),
+    windowsWakeCooldownSeconds: finite(runtime.windows_wake_cooldown_seconds, base.windowsWakeCooldownSeconds, .1, 30),
     speakerVerificationEnabled: bool(runtime.speaker_verification_enabled, base.speakerVerificationEnabled),
     runtimeRoot: textOr(paths.runtimeRoot, base.runtimeRoot, 500),
     configPath: textOr(paths.configPath, base.configPath, 500),
@@ -221,6 +236,11 @@ export function normalizePhoneAgentConfig(raw = {}) {
   value.clarificationTimeoutSeconds = finite(raw.clarificationTimeoutSeconds, base.clarificationTimeoutSeconds, 1, 60)
   value.bargeInEnabled = bool(raw.bargeInEnabled, base.bargeInEnabled)
   value.wakeEnabled = bool(raw.wakeEnabled, base.wakeEnabled)
+  value.windowsWakeEnabled = bool(raw.windowsWakeEnabled, base.windowsWakeEnabled)
+  value.windowsWakeModelDir = text(raw.windowsWakeModelDir, 500)
+  value.windowsWakeKeywordsScore = finite(raw.windowsWakeKeywordsScore, base.windowsWakeKeywordsScore, .01, 20)
+  value.windowsWakeKeywordsThreshold = finite(raw.windowsWakeKeywordsThreshold, base.windowsWakeKeywordsThreshold, .01, 1)
+  value.windowsWakeCooldownSeconds = finite(raw.windowsWakeCooldownSeconds, base.windowsWakeCooldownSeconds, .1, 30)
   value.speakerVerificationEnabled = bool(raw.speakerVerificationEnabled, base.speakerVerificationEnabled)
   // These values are accepted for host-side use but never returned to the client.
   value.runtimeRoot = text(raw.runtimeRoot, 500)
@@ -275,6 +295,7 @@ export function phoneAgentView(state, runtime = { state: 'stopped' }) {
   delete config.runtimeRoot
   delete config.pythonPath
   delete config.configPath
+  delete config.windowsWakeModelDir
   return {
     config,
     bots: profilesOf(state).map(bot => ({ id: bot.id, name: bot.name,
@@ -361,8 +382,7 @@ class RuntimeManager {
       this.bridge = bridge
       this.child = child
       child.stdout?.on('data', data => {
-        const lines = String(data).split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-        if (lines.length > 0) this.lastOutput = lines.at(-1).slice(0, 2000)
+        this.lastOutput = appendPhoneAgentOutput(this.lastOutput, data)
       })
       child.stderr?.on('data', data => {
         this.lastError = `${this.lastError}${String(data)}`.slice(-2000).trim()

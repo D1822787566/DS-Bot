@@ -98,6 +98,21 @@ test('Phone Agent settings exposes a self-test and runtime diagnostics', async t
   assert.match(document.body.textContent, /missing dependency/)
 })
 
+test('Phone Agent settings shows the latest runtime stdout for audio readiness', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: {
+      state: 'ready', lastOutput: '{"type":"windows.audio.input_ready","sample_rate":48000}',
+    } }),
+    phoneAgentTest: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'ready' }, diagnostics: {
+      status: 'pass', bundledRuntime: true, pythonCommand: 'python.exe', processState: 'ready',
+      lastOutput: '{"type":"windows.audio.input_ready","sample_rate":48000}',
+    } }),
+  } })
+  assert.match(document.body.textContent, /windows\.audio\.input_ready/)
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === 'Run self-test').click())
+  assert.match(document.body.textContent, /sample_rate/)
+})
+
 test('the Bot extension checks presets without drawing a second market or claiming plugin ownership', async t => {
   const calls = []
   const document = await mount(t, BotPresets, { actions: {

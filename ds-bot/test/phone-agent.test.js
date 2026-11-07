@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
+import { appendPhoneAgentOutput, defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
 
 test('fills legacy empty Phone Agent fields from imported defaults', () => {
   const current = { ...defaultPhoneAgentConfig(), deviceId: 'windows-dsbot-01', targetId: 'windows-dsbot-01', runtimeRoot: '', configPath: '', asrModelDir: '' }
@@ -106,6 +106,13 @@ test('keeps runtime diagnostics visible for the status and self-test panels', ()
     lastError: 'ModuleNotFoundError: No module named jsonschema',
     lastOutput: '{"type":"runtime.starting"}',
   })
+})
+
+test('keeps the bounded runtime stdout history for audio readiness diagnostics', () => {
+  const value = appendPhoneAgentOutput('', '{"type":"windows.audio.input_ready"}\n{"type":"runtime.ready"}\n')
+  assert.match(value, /windows\.audio\.input_ready/)
+  assert.match(value, /runtime\.ready/)
+  assert.ok(value.length <= 2000)
 })
 
 test('self-test checks the bundled runtime boundary and current process state', () => {
