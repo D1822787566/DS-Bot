@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import * as phoneAgent from '../src/host/phone-agent.js'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { appendPhoneAgentOutput, defaultPhoneAgentConfig, mergePhoneAgentDefaults, normalizePhoneAgentConfig, phoneAgentDefaultsFromRuntime, phoneAgentEnvironmentFromRuntime, phoneAgentProjectRoot, phoneAgentRuntimeEvent, submitPhoneAgentInput, updatePhoneAgentProfile, phoneAgentView, phoneAgentRuntimeDiagnostics, voiceRuntimeLaunch } from '../src/host/phone-agent.js'
@@ -50,6 +50,15 @@ test('stream parser preserves split JSON and removes private provider output', (
   assert.doesNotMatch(parser.output(), /secret|api_key/)
   parser.write('provider printed private transcript and credential\n')
   assert.doesNotMatch(parser.output(), /private transcript|credential/)
+})
+
+test('explicit ASR test exposes its transcript to the panel without retaining it in runtime output', () => {
+  const events = []
+  const parser = phoneAgent.createPhoneAgentRuntimeParser((_view, type, event) => events.push({ type, event }))
+  parser.write('{"type":"asr.test.completed","segment_id":4,"result":"completed","transcript":"华子，检查项目。","characters":8,"duration_ms":321}\n')
+  assert.equal(events[0].type, 'asr.test.completed')
+  assert.equal(events[0].event.transcript, '华子，检查项目。')
+  assert.doesNotMatch(parser.output(), /华子|检查项目/)
 })
 
 test('sanitized diagnostics retain integer segment IDs, identity outcomes and nested wake counters', () => {
@@ -116,6 +125,29 @@ test('runtime view survives page loads with structured startup and segment diagn
   const state = { prefs: { phoneAgent: defaultPhoneAgentConfig() }, bots: {} }
   const runtime = { state: 'starting', stage: 'environment_installing', errorCode: 'dependency_install_failed', lastResult: 'owner_rejected' }
   assert.deepEqual(phoneAgentView(state, runtime).runtime, runtime)
+})
+
+test('managed runtime exposes an explicit ASR test command', async t => {
+  const manager = new phoneAgent.RuntimeManager({}, { spawnProcess: () => assert.fail('must not spawn') })
+  manager.child = { pid: 1 }
+  manager.runtimeReady = true
+  t.after(() => { try { unlinkSync(manager.diagnosticCommandPath) } catch {} })
+  const result = manager.requestAsrTest()
+  assert.equal(result.metrics.asrTestState, 'requested')
+})
+
+test('managed runtime writes bounded TTS and dry-run full-chain test commands', t => {
+  const manager = new phoneAgent.RuntimeManager({}, { spawnProcess: () => assert.fail('must not spawn') })
+  manager.child = { pid: 1 }
+  manager.runtimeReady = true
+  t.after(() => { try { unlinkSync(manager.diagnosticCommandPath) } catch {} })
+  manager.requestTtsTest('测试播放', 'voice-a')
+  const ttsCommand = JSON.parse(readFileSync(manager.diagnosticCommandPath, 'utf8'))
+  assert.equal(ttsCommand.mode, 'tts_test')
+  assert.equal(ttsCommand.text, '测试播放')
+  assert.equal(ttsCommand.voice, 'voice-a')
+  manager.requestFullChainTest()
+  assert.equal(JSON.parse(readFileSync(manager.diagnosticCommandPath, 'utf8')).mode, 'full_chain_test')
 })
 
 test('normalizes supported continuation mode, thresholds and model device', () => {

@@ -36,6 +36,23 @@ class SpeechModels:
             'pending_samples': 0, 'approved_samples': 0,
         }
 
+    async def transcribe_only(self, segment):
+        """Transcribe one finalized segment without running owner verification."""
+        if self.pending:
+            raise SpeechFailure('models_busy')
+        asr = self._infer(self.transcribe, segment)
+        try:
+            text = await asyncio.wait_for(asyncio.shield(asr), self.asr_timeout)
+        except TimeoutError:
+            raise SpeechFailure('asr_timeout') from None
+        except Exception:
+            raise SpeechFailure('asr_inference_failed') from None
+        if not isinstance(text, str) or not text.strip():
+            raise SpeechFailure('empty_transcript')
+        if len(text) > 2000:
+            raise SpeechFailure('transcript_too_long')
+        return text
+
     def label_profile_sample(self, candidate):
         if self.profile is None or not candidate or candidate.get('embedding') is None:
             raise SpeechFailure('voiceprint_candidate_missing')

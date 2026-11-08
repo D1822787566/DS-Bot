@@ -33,6 +33,11 @@ export function emptyPhoneAgentMetrics() {
     voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestResult: '',
     voiceprintCandidateReady: false, voiceprintCandidateSegmentId: null,
     voiceprintPendingSamples: 0, voiceprintApprovedSamples: 0, recent: [],
+    asrTestStarted: 0, asrTestCompleted: 0, asrTestState: 'idle', asrTestResult: '',
+    asrTestTranscript: '', asrTestSegmentId: null, asrTestDurationMs: null,
+    asrTestCharacters: 0, asrTestError: '',
+    ttsTestStarted: 0, ttsTestCompleted: 0, ttsTestResult: '',
+    fullChainTestStarted: 0, fullChainTestCompleted: 0, fullChainTestState: 'idle', fullChainTestResult: '',
   }
 }
 
@@ -93,6 +98,39 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
       metrics.voiceprintCandidateReady = false
       metrics.voiceprintCandidateSegmentId = null
     }
+  } else if (type === 'asr.test.ready') {
+    metrics.asrTestStarted++
+    metrics.asrTestState = 'ready'
+    metrics.asrTestResult = ''
+    metrics.asrTestTranscript = ''
+    metrics.asrTestError = ''
+  } else if (type === 'asr.test.started') {
+    metrics.asrTestState = 'recognizing'
+    metrics.asrTestSegmentId = Number.isInteger(event.segment_id) ? event.segment_id : null
+  } else if (type === 'asr.test.completed') {
+    metrics.asrTestCompleted++
+    metrics.asrTestState = event.result === 'completed' ? 'completed' : event.result === 'timeout' ? 'timeout' : 'failed'
+    metrics.asrTestResult = statusCode(event.result) || ''
+    metrics.asrTestTranscript = typeof event.transcript === 'string' ? event.transcript.slice(0, 4000) : ''
+    metrics.asrTestSegmentId = Number.isInteger(event.segment_id) ? event.segment_id : null
+    metrics.asrTestDurationMs = metricNumber(event.duration_ms) ?? null
+    metrics.asrTestCharacters = metricNumber(event.characters) ?? 0
+    metrics.asrTestError = statusCode(event.error_code) || ''
+  } else if (type === 'tts.test.started') {
+    metrics.ttsTestStarted++
+  } else if (type === 'tts.test.completed') {
+    metrics.ttsTestCompleted++
+    metrics.ttsTestResult = statusCode(event.result) || ''
+  } else if (type === 'full_chain.test.ready') {
+    metrics.fullChainTestStarted++
+    metrics.fullChainTestState = 'ready'
+    metrics.fullChainTestResult = ''
+  } else if (type === 'full_chain.test.wake' || type === 'full_chain.test.stage') {
+    metrics.fullChainTestState = 'running'
+  } else if (type === 'full_chain.test.completed') {
+    metrics.fullChainTestCompleted++
+    metrics.fullChainTestState = event.result === 'completed' ? 'completed' : 'failed'
+    metrics.fullChainTestResult = statusCode(event.result) || ''
   }
 
   if (type !== 'windows.wake.audio') {
@@ -106,7 +144,7 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
   return metrics
 }
 
-function safeRuntimeLine(line) {
+function safeRuntimeEvent(line) {
   try {
     const event = JSON.parse(String(line))
     if (typeof event?.type !== 'string' || !/^(runtime|windows|audio|input|output|asr|owner|identity|continuation|voice)\.[a-zA-Z0-9._]+$/.test(event.type)) return ''
@@ -127,8 +165,20 @@ function safeRuntimeLine(line) {
       }
       if (Object.keys(diagnostics).length) safe.wake_diagnostics = diagnostics
     }
-    return JSON.stringify(safe)
-  } catch { return '' }
+    const safeLine = JSON.stringify(safe)
+    // Explicit ASR test text is delivered to the in-memory test result only.
+    // It is deliberately excluded from parser.output(), which is retained as
+    // runtime diagnostics and may be displayed outside the test center.
+    const callbackEvent = JSON.parse(safeLine)
+    if (event.type === 'asr.test.completed' && typeof event.transcript === 'string') {
+      callbackEvent.transcript = event.transcript.slice(0, 4000)
+    }
+    return { safeLine, event: callbackEvent }
+  } catch { return null }
+}
+
+function safeRuntimeLine(line) {
+  return safeRuntimeEvent(line)?.safeLine ?? ''
 }
 
 export function createPhoneAgentRuntimeParser(onEvent) {
@@ -139,11 +189,10 @@ export function createPhoneAgentRuntimeParser(onEvent) {
       const lines = pending.split(/\r?\n/)
       pending = lines.pop().slice(-65536)
       for (const line of lines) {
-        const safe = safeRuntimeLine(line)
-        if (!safe) continue
-        output = appendPhoneAgentOutput(output, safe)
-        const event = JSON.parse(safe)
-        onEvent(phoneAgentRuntimeEvent(safe), event.type, event)
+        const parsed = safeRuntimeEvent(line)
+        if (!parsed) continue
+        output = appendPhoneAgentOutput(output, parsed.safeLine)
+        onEvent(phoneAgentRuntimeEvent(parsed.safeLine), parsed.event.type, parsed.event)
       }
     },
     output: () => output,
@@ -792,6 +841,27 @@ export class RuntimeManager {
   rolesChanged() { this.bridge?.rolesChanged() }
   diagnose(config) { return phoneAgentRuntimeDiagnostics(config, this.view()) }
   resetMetrics() { this.metrics = emptyPhoneAgentMetrics(); return this.view() }
+  requestAsrTest() {
+    if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for an ASR test')
+    mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
+    writeFileSync(this.diagnosticCommandPath, JSON.stringify({ mode: 'asr_test', created_at: new Date().toISOString() }), { encoding: 'utf8', mode: 0o600 })
+    this.metrics.asrTestState = 'requested'
+    return this.view()
+  }
+  requestTtsTest(textValue, voice) {
+    if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a TTS test')
+    const text = typeof textValue === 'string' ? textValue.trim().slice(0, 1000) : ''
+    if (!text) throw new Error('TTS test text is required')
+    mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
+    writeFileSync(this.diagnosticCommandPath, JSON.stringify({ mode: 'tts_test', text, voice: textOr(voice, '', 120), created_at: new Date().toISOString() }), { encoding: 'utf8', mode: 0o600 })
+    return this.view()
+  }
+  requestFullChainTest() {
+    if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a full chain test')
+    mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
+    writeFileSync(this.diagnosticCommandPath, JSON.stringify({ mode: 'full_chain_test', created_at: new Date().toISOString() }), { encoding: 'utf8', mode: 0o600 })
+    return this.view()
+  }
   requestVoiceprintCommand(mode, segmentId) {
     if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a voiceprint test')
     if (!['voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'].includes(mode)) throw new Error('Unknown voiceprint command')
@@ -871,12 +941,16 @@ export function install(rt) {
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
   const phoneAgentTest = () => ({ ...phoneAgent(), diagnostics: manager.diagnose(state.prefs.phoneAgent) })
   const phoneAgentDiagnosticsReset = () => { manager.resetMetrics(); return phoneAgent() }
+  const phoneAgentAsrTest = () => { manager.requestAsrTest(); return phoneAgent() }
+  const phoneAgentTtsTest = body => { manager.requestTtsTest(body?.text, body?.voice); return phoneAgent() }
+  const phoneAgentFullChainTest = () => { manager.requestFullChainTest(); return phoneAgent() }
   const phoneAgentVoiceprintTest = () => { manager.requestVoiceprintTest(); return phoneAgent() }
   const phoneAgentVoiceprintLabel = segmentId => { manager.labelVoiceprintSample(segmentId); return phoneAgent() }
   const phoneAgentVoiceprintApply = () => { manager.applyVoiceprintSamples(); return phoneAgent() }
   const phoneAgentVoiceprintDiscard = () => { manager.discardVoiceprintSamples(); return phoneAgent() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
   Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset,
+    phoneAgentAsrTest, phoneAgentTtsTest, phoneAgentFullChainTest,
     phoneAgentVoiceprintTest, phoneAgentVoiceprintLabel, phoneAgentVoiceprintApply, phoneAgentVoiceprintDiscard, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.

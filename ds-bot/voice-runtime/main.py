@@ -60,10 +60,10 @@ def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
     return result
 
 
-VOICEPRINT_COMMANDS = {'voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'}
+DIAGNOSTIC_COMMANDS = {'voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard', 'asr_test', 'tts_test', 'full_chain_test'}
 
 
-def read_voiceprint_request(path):
+def read_diagnostic_request(path):
     if not path:
         return None
     path = Path(path)
@@ -72,12 +72,24 @@ def read_voiceprint_request(path):
         path.unlink(missing_ok=True)
     except (FileNotFoundError, OSError, ValueError, TypeError):
         return None
-    if not isinstance(payload, dict) or payload.get('mode') not in VOICEPRINT_COMMANDS:
+    if not isinstance(payload, dict) or payload.get('mode') not in DIAGNOSTIC_COMMANDS:
         return None
     request = {'mode': payload['mode']}
     if isinstance(payload.get('segment_id'), int) and payload['segment_id'] >= 0:
         request['segment_id'] = payload['segment_id']
+    if payload['mode'] == 'tts_test':
+        text = payload.get('text')
+        if isinstance(text, str) and text.strip():
+            request['text'] = text.strip()[:1000]
+        voice = payload.get('voice')
+        if isinstance(voice, str) and voice.strip():
+            request['voice'] = voice.strip()[:120]
     return request
+
+
+def read_voiceprint_request(path):
+    request = read_diagnostic_request(path)
+    return request if request and request['mode'].startswith('voiceprint') else None
 
 
 def read_voiceprint_command(path):
@@ -524,6 +536,12 @@ class VoiceRuntime:
         self._voiceprint_mode = False
         self._voiceprint_started_at = 0.0
         self._voiceprint_candidate = None
+        self._asr_test_mode = False
+        self._asr_test_started_at = 0.0
+        self._full_chain_mode = False
+        self._full_chain_started_at = 0.0
+        self._full_chain_wake = False
+        self._full_chain_bot_id = None
         self.output = VoiceOutput(
             bridge, tts, playback,
             owns=lambda correlation: self.input.owns_output(correlation) if self.input else True,
@@ -657,24 +675,61 @@ class VoiceRuntime:
 
     def _on_pcm(self, pcm):
         if self.segmenter:
-            self._poll_voiceprint_command()
+            self._poll_diagnostic_command()
             for segment in self.segmenter.feed(pcm, now=time.monotonic()):
-                if self._voiceprint_mode:
+                if self._asr_test_mode:
+                    self._asr_test_mode = False
+                    self._spawn(self._run_asr_test(segment))
+                elif self._full_chain_mode and self._full_chain_wake:
+                    self._full_chain_mode = False
+                    self._full_chain_wake = False
+                    self._spawn(self._run_full_chain_test(segment))
+                elif self._voiceprint_mode:
                     self._voiceprint_mode = False
                     self._spawn(self._run_voiceprint_test(segment))
                 elif self.input:
                     self.input.offer(segment)
 
-    def _poll_voiceprint_command(self):
+    def _poll_diagnostic_command(self):
+        if self._asr_test_mode and time.monotonic() - self._asr_test_started_at > 20:
+            self._asr_test_mode = False
+            self.record('asr.test.completed', result='timeout')
+        if self._full_chain_mode and time.monotonic() - self._full_chain_started_at > 20:
+            self._full_chain_mode = False
+            self._full_chain_wake = False
+            self.record('full_chain.test.completed', result='timeout')
         if self._voiceprint_mode and time.monotonic() - self._voiceprint_started_at > 20:
             self._voiceprint_mode = False
             self._voiceprint_candidate = None
             self.record('voice.test.completed', result='timeout')
-        request = read_voiceprint_request(self.config.get('diagnosticCommandPath', ''))
+        request = read_diagnostic_request(self.config.get('diagnosticCommandPath', ''))
         if not request:
             return
         mode = request['mode']
+        if mode == 'asr_test':
+            self._voiceprint_mode = False
+            self._full_chain_mode = False
+            self._full_chain_wake = False
+            self._asr_test_mode = True
+            self._asr_test_started_at = time.monotonic()
+            self.record('asr.test.ready', result='speak_now')
+            return
+        if mode == 'tts_test':
+            self._spawn(self._run_tts_test(request.get('text') or '这是语音测试。', request.get('voice') or self.config.get('ttsVoice')))
+            return
+        if mode == 'full_chain_test':
+            self._asr_test_mode = False
+            self._voiceprint_mode = False
+            self._full_chain_mode = True
+            self._full_chain_wake = False
+            self._full_chain_started_at = time.monotonic()
+            self._full_chain_bot_id = None
+            self.record('full_chain.test.ready', result='say_wake_word')
+            return
         if mode == 'voiceprint':
+            self._asr_test_mode = False
+            self._full_chain_mode = False
+            self._full_chain_wake = False
             self._voiceprint_mode = True
             self._voiceprint_started_at = time.monotonic()
             self._voiceprint_candidate = None
@@ -716,6 +771,57 @@ class VoiceRuntime:
             self.record('voice.sample.discarded', pending_samples=status.get('pending_samples', 0),
                         approved_samples=status.get('approved_samples', 0))
 
+    # Kept as a narrow compatibility alias for callers that only know the
+    # original voiceprint diagnostic command.
+    def _poll_voiceprint_command(self):
+        return self._poll_diagnostic_command()
+
+    async def _run_asr_test(self, segment):
+        started = time.monotonic()
+        self.record('asr.test.started', segment_id=segment.segment_id)
+        try:
+            text = await self.models.transcribe_only(segment)
+        except SpeechFailure as error:
+            self.record('asr.test.completed', segment_id=segment.segment_id, result='failed',
+                        error_code=str(error), duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+            return
+        self.record('asr.test.completed', segment_id=segment.segment_id, result='completed',
+                    transcript=text, characters=len(text),
+                    duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+
+    async def _run_tts_test(self, text, voice):
+        self.record('tts.test.started')
+        try:
+            await self.output.say(text, voice=voice)
+        except Exception:
+            self.record('tts.test.completed', result='failed', error_code='tts_playback_failed')
+            return
+        self.record('tts.test.completed', result='completed')
+
+    async def _run_full_chain_test(self, segment):
+        started = time.monotonic()
+        self.record('full_chain.test.stage', stage='asr_and_owner')
+        try:
+            _text, owner = await self.models.recognize(segment)
+        except SpeechFailure as error:
+            self.record('full_chain.test.completed', result='failed', error_code=str(error),
+                        duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+            return
+        if owner.identity != 'owner' or owner.status != 'verified':
+            self.record('full_chain.test.completed', result='owner_rejected', score=owner.score,
+                        duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+            return
+        self.record('full_chain.test.stage', stage='tts_playback')
+        role = next((item for item in (self.roles or {}).get('roles', [])
+                     if item.get('bot_id') == self._full_chain_bot_id), {})
+        try:
+            await self.output.say('语音链路测试完成。', voice=role.get('tts_voice') or self.config.get('ttsVoice'))
+        except Exception:
+            self.record('full_chain.test.completed', result='failed', error_code='tts_playback_failed')
+            return
+        self.record('full_chain.test.completed', result='completed', submitted=False,
+                    duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+
     async def _run_voiceprint_test(self, segment):
         started = time.monotonic()
         try:
@@ -749,6 +855,13 @@ class VoiceRuntime:
                     **{key: status[key] for key in ('pending_samples', 'approved_samples') if key in status})
 
     async def _on_wake(self, payload):
+        if self._full_chain_mode:
+            self._full_chain_wake = True
+            self._full_chain_bot_id = payload.get('bot_id')
+            if self.segmenter:
+                self.segmenter.reset()
+            self.record('full_chain.test.wake', bot_id=payload.get('bot_id'))
+            return
         if self.input is None:
             # Standalone protocol diagnostics never create verified Bot input.
             publisher = getattr(self.bridge, "publish_wake", None)

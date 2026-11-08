@@ -178,6 +178,15 @@ export function install(rt) {
         case 'phone-agent': return ok(rt.phoneAgent())
         case 'phone-agent-test': return ok(rt.phoneAgentTest())
         case 'phone-agent-diagnostics-reset': return ok(rt.phoneAgentDiagnosticsReset())
+        case 'phone-agent-asr-test':
+          await rt.load()
+          return ok(rt.phoneAgentAsrTest())
+        case 'phone-agent-tts-test':
+          await rt.load()
+          return ok(rt.phoneAgentTtsTest(body))
+        case 'phone-agent-full-chain-test':
+          await rt.load()
+          return ok(rt.phoneAgentFullChainTest())
         case 'phone-agent-voiceprint-test': return ok(rt.phoneAgentVoiceprintTest())
         case 'phone-agent-voiceprint-label':
           await rt.load()

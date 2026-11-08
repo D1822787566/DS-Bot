@@ -35,6 +35,14 @@ def test_owner_verified_recognition_preserves_the_complete_asr_transcript():
     assert owner.status == 'verified'
 
 
+def test_transcribe_only_does_not_call_owner_verification():
+    calls = []
+    models = SpeechModels(lambda _: (calls.append('asr') or '完整结果'), lambda _: calls.append('owner'))
+    text = asyncio.run(models.transcribe_only(segment()))
+    assert text == '完整结果'
+    assert calls == ['asr']
+
+
 def test_native_timeout_cannot_launch_more_parallel_model_work_or_submit_late():
     released = threading.Event()
     calls = []

@@ -121,12 +121,85 @@ export function BotPresets({ actions }) {
         }) }, t('Confirm'))) : null) : null)
 }
 
+export function PhoneAgentTestCenter({ actions, value, runtime, metrics, busy, run }) {
+  const [ttsText, setTtsText] = useState('这是语音测试。')
+  const [ttsVoice, setTtsVoice] = useState(value?.bots?.[0]?.ttsVoice ?? '')
+  const metric = (key, fallback = 0) => metrics[key] ?? fallback
+  const ownerScore = typeof metrics.ownerLastScore === 'number' ? metrics.ownerLastScore.toFixed(3) : '—'
+  const voiceprintCandidateReady = metrics.voiceprintCandidateReady === true && Number.isInteger(metrics.voiceprintCandidateSegmentId)
+  const voiceprintPendingSamples = Number(metrics.voiceprintPendingSamples ?? 0)
+  const voiceprintApprovedSamples = Number(metrics.voiceprintApprovedSamples ?? 0)
+  const asrState = metrics.asrTestState ?? 'idle'
+  const asrStateLabel = { idle: '未开始', requested: '等待下一段语音', ready: '请直接说话', recognizing: '识别中', completed: '识别完成', failed: '识别失败', timeout: '测试超时' }[asrState] ?? asrState
+  const asrTranscript = metrics.asrTestTranscript || (asrState === 'ready' || asrState === 'requested' ? '请直接说一句话。测试不会提交给 Bot。' : '暂无识别结果。')
+  const voiceprintReviewText = metrics.voiceprintTestResult === 'owner_rejected'
+    ? '这段语音的主人声纹没有通过。请确认这是不是你的声音。'
+    : '这段语音已经通过主人声纹。确认后可以把它加入主人声纹样本。'
+  return h('section', { className: 'bt-phone-test-center', 'aria-label': '语音测试中心' },
+    h('div', { className: 'bt-phone-card' },
+      h('div', { className: 'bt-phone-panel-heading' },
+        h('div', null, h('h3', null, '语音测试中心'), h('p', { className: 'bt-note' }, '每个测试独立运行。ASR、唤醒词、声纹和 TTS 测试都不会提交 Bot 任务。')),
+        h('div', { className: 'bt-phone-panel-actions' },
+          h('button', { type: 'button', className: 'bt-soft', disabled: busy || !actions.phoneAgentAsrTest, onClick: () => run(actions.phoneAgentAsrTest, 'ASR 测试已准备，请直接说话') }, '测试 ASR（下一段语音）'),
+          h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentVoiceprintTest, '声纹测试已准备，请直接说话') }, '测试主人声纹'),
+          h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentDiagnosticsReset, '测试数据已清零') }, '清空本轮结果'))),
+      h('p', { className: 'bt-phone-summary', role: 'status' }, `当前运行状态：${runtime.state} · ASR 测试：${asrStateLabel}`)),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '测试控制'),
+      h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, '当前测试'), h('strong', null, asrState !== 'idle' ? `ASR：${asrStateLabel}` : metrics.voiceprintTestStarted > metrics.voiceprintTestCompleted ? '主人声纹：等待语音' : '没有主动测试'),
+        h('span', null, '测试安全边界'), h('strong', null, '不保存 PCM · 不提交 Bot'))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '麦克风与音频输入'),
+      h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, '麦克风帧数'), h('strong', null, String(metric('microphoneFrames'))),
+        h('span', null, '输入丢帧'), h('strong', null, String(metric('microphoneDrops'))),
+        h('span', null, '峰值 / 平均音量'), h('strong', null, `${metric('microphonePeak')} / ${Number(metric('microphoneRms')).toFixed(3)}`),
+        h('span', null, '语音段'), h('strong', null, `${metric('segmentEnded')} 段完成 / ${metric('segmentDropped')} 段丢弃`))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '唤醒词测试'),
+      h('p', { className: 'bt-note' }, '说出已配置的唤醒词，只观察识别结果，不会进入 Bot 对话。'),
+      h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, '唤醒词结果'), h('strong', null, `${metric('wakeKeywordResults')} 次`),
+        h('span', null, '唤醒确认'), h('strong', null, `${metric('wakeAccepted')} 次`),
+        h('span', null, '未知词 / 冷却丢弃'), h('strong', null, `${metric('wakeUnknownKeywords')} / ${metric('wakeCooldownDrops')}`))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, 'ASR 测试'),
+      h('p', { className: 'bt-note' }, '当前版本在一段语音结束后显示最终识别文本。它不会做声纹验证，也不会提交给 Bot。'),
+      h('div', { className: 'bt-phone-panel-actions' }, h('button', { type: 'button', className: 'bt-soft', disabled: busy || !actions.phoneAgentAsrTest, onClick: () => run(actions.phoneAgentAsrTest, 'ASR 测试已准备，请直接说话') }, '识别下一段语音')),
+      h('p', { className: 'bt-phone-test-state', role: 'status' }, `状态：${asrStateLabel}`),
+      h('pre', { className: 'bt-phone-asr-result', 'data-phone-agent-asr-result': true }, asrTranscript),
+      h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, '语音段编号'), h('strong', null, metrics.asrTestSegmentId ?? '—'),
+        h('span', null, '识别耗时'), h('strong', null, metrics.asrTestDurationMs === null ? '—' : `${metrics.asrTestDurationMs} ms`),
+        h('span', null, '字符数'), h('strong', null, String(metrics.asrTestCharacters ?? 0)),
+        h('span', null, '错误'), h('strong', null, metrics.asrTestError || '无'))),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '主人声纹测试'),
+      h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
+        h('span', null, '通过 / 拒绝 / 失败'), h('strong', null, `${metric('ownerVerified')} / ${metric('ownerRejected')} / ${metric('ownerFailed')}`),
+        h('span', null, '分数'), h('strong', null, `${ownerScore}（${metrics.ownerMinScore ?? '—'}–${metrics.ownerMaxScore ?? '—'}）`)),
+      voiceprintCandidateReady ? h('div', { className: 'bt-phone-voiceprint-review', role: 'status' },
+        h('p', null, voiceprintReviewText),
+        h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentVoiceprintLabel(metrics.voiceprintCandidateSegmentId), '已加入待应用声纹样本') }, '确认这是我，加入主人声纹')) : null,
+      h('p', { className: 'bt-note' }, `待应用样本：${voiceprintPendingSamples} 段 · 已应用样本：${voiceprintApprovedSamples} 段`),
+      voiceprintPendingSamples > 0 ? h('div', { className: 'bt-phone-panel-actions' },
+        h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentVoiceprintApply, '主人声纹样本已应用') }, '应用待应用样本'),
+        h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentVoiceprintDiscard, '待应用样本已删除') }, '删除待应用样本')) : null),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, 'TTS 与扬声器测试'),
+      h('label', { className: 'bt-phone-field' }, h('span', null, '测试文字'), h('textarea', { className: 'bt-input bt-phone-textarea', value: ttsText, onChange: event => setTtsText(event.target.value) })),
+      h('label', { className: 'bt-phone-field' }, h('span', null, 'TTS 音色'), h('input', { className: 'bt-input', value: ttsVoice, onChange: event => setTtsVoice(event.target.value) })),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy || !actions.phoneAgentTtsTest || !ttsText.trim(), onClick: () => run(() => actions.phoneAgentTtsTest({ text: ttsText, voice: ttsVoice }), 'TTS 测试已完成') }, '播放测试语音'),
+      h('p', { className: 'bt-note', role: 'status' }, `最近结果：${metrics.ttsTestResult || '尚未测试'}`)),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '完整链路测试'),
+      h('p', { className: 'bt-note' }, '先点击测试，再说唤醒词和一句话。测试会执行唤醒、VAD、ASR、声纹和测试播放，但不会提交真实 Bot 任务。'),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy || !actions.phoneAgentFullChainTest, onClick: () => run(actions.phoneAgentFullChainTest, '完整链路测试已准备，请说唤醒词') }, '开始完整链路测试'),
+      h('p', { className: 'bt-phone-test-state', role: 'status' }, `最近结果：${metrics.fullChainTestResult || '尚未测试'}`))
+  )
+}
+
 export function PhoneAgentSettings({ actions }) {
   const [value, setValue] = useState(null)
   const [draft, setDraft] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [activePanel, setActivePanel] = useState('tests')
   const load = async () => {
     const next = await actions.phoneAgent()
     setValue(next)
@@ -181,7 +254,11 @@ export function PhoneAgentSettings({ actions }) {
       runtime.errorCode ? h('p', null, t('Error code: {code}', { code: runtime.errorCode })) : null,
       runtime.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastError) : null,
       runtime.lastOutput ? h('pre', { className: 'bt-phone-diagnostic' }, runtime.lastOutput) : null),
-    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Runtime diagnostics')),
+    h('nav', { className: 'bt-phone-tabs', 'aria-label': 'Phone Agent 页面' },
+      h('button', { type: 'button', className: activePanel === 'tests' ? 'bt-soft bt-phone-tab-active' : 'bt-soft', 'aria-selected': activePanel === 'tests', onClick: () => setActivePanel('tests') }, '语音测试中心'),
+      h('button', { type: 'button', className: activePanel === 'config' ? 'bt-soft bt-phone-tab-active' : 'bt-soft', 'aria-selected': activePanel === 'config', onClick: () => setActivePanel('config') }, '运行配置')),
+    h('div', { hidden: activePanel !== 'tests' }, h(PhoneAgentTestCenter, { actions, value, runtime, metrics, busy, run })),
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card' }, h('h3', null, t('Runtime diagnostics')),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentTest, 'Self-test completed') }, t('Run self-test')),
       diagnostics ? h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
         h('span', null, t('Self-test')), h('strong', null, diagnostics.status === 'pass' ? t('Pass') : t('Needs attention')),
@@ -192,7 +269,7 @@ export function PhoneAgentSettings({ actions }) {
          diagnostics.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, diagnostics.lastError) : null,
          diagnostics.lastOutput ? h('span', null, t('Last stdout')) : null,
          diagnostics.lastOutput ? h('pre', { className: 'bt-phone-diagnostic' }, diagnostics.lastOutput) : null) : null),
-    h('section', { className: 'bt-phone-card', 'aria-label': '语音测试面板' },
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card', 'aria-label': '语音测试面板' },
       h('div', { className: 'bt-phone-panel-heading' },
         h('div', null, h('h3', null, '语音测试面板'),
           h('p', { className: 'bt-note' }, '先清零数据，然后连续说几次唤醒词和简短指令。这里仅保存计数和安全分数，不保存音频或完整转写。')),
@@ -226,20 +303,20 @@ export function PhoneAgentSettings({ actions }) {
         : null),
     error ? h('div', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
     message ? h('p', { role: 'status' }, message) : null,
-    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Windows audio and LiveKit')),
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card' }, h('h3', null, t('Windows audio and LiveKit')),
       configField('deviceId', 'Device ID'), configField('inputDeviceName', 'Microphone'), configField('outputDeviceName', 'Speaker'),
       configField('livekitUrl', 'LiveKit local URL'), configField('livekitRoom', 'LiveKit room'),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save settings'))),
-    h('section', { className: 'bt-phone-card' }, h('h3', null, t('ASR and TTS')),
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card' }, h('h3', null, t('ASR and TTS')),
       configField('asrModel', 'ASR model'), configField('asrModelDir', 'ASR model directory'), configField('speakerModelDir', 'Speaker model directory'), configField('speakerProfileDir', 'Speaker profile directory'),
       configField('ttsModel', 'TTS model'), configField('ttsConfigPath', 'TTS configuration path'),
       h('p', { className: 'bt-note' }, t('Speaker verification is enabled by default. Record or replace the owner profile before starting voice input.')),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save ASR/TTS'))),
-    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Advanced continuation')),
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card' }, h('h3', null, t('Advanced continuation')),
       h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.config.continuationEnabled !== false, onChange: event => setDraft(current => ({ ...current, config: { ...current.config, continuationEnabled: event.target.checked } })) }), t('Enable semantic continuation')),
       configField('continuationModel', 'Continuation model'), configField('continuationUrl', 'Continuation local URL'),
       h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.phoneAgentUpdate({ config: draft.config }), 'Settings saved') }, t('Save advanced settings'))),
-    h('section', { className: 'bt-phone-card' }, h('h3', null, t('Bots, wake words and voices')),
+    h('section', { hidden: activePanel === 'tests', className: 'bt-phone-card' }, h('h3', null, t('Bots, wake words and voices')),
       (value?.bots ?? []).map(bot => {
         const profile = draft.bots[bot.id] ?? { wakeName: '', ttsVoice: '' }
         return h('div', { className: 'bt-phone-bot', key: bot.id }, h('strong', null, bot.name),
@@ -295,5 +372,5 @@ export const PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-tabs{display:flex;gap:8px;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--bt-line)}.bt-phone-tab-active{font-weight:600;border-color:var(--bt-ink-2)}.bt-phone-test-center{display:block}.bt-phone-test-state{margin:10px 0 0;color:var(--bt-ink-2)}.bt-phone-asr-result{min-height:76px;white-space:pre-wrap;overflow-wrap:anywhere;font:15px var(--bt-font);margin:12px 0;padding:12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-textarea{min-height:72px;resize:vertical}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
 `

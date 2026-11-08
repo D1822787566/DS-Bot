@@ -186,6 +186,56 @@ def test_voiceprint_label_command_is_consumed_and_preserves_segment_id(tmp_path)
     assert main.read_voiceprint_request(path) is None
 
 
+def test_asr_test_command_is_consumed_without_voiceprint_fields(tmp_path):
+    path = tmp_path / 'voice-diagnostics-command.json'
+    path.write_text('{"mode":"asr_test"}', encoding='utf-8')
+    assert main.read_diagnostic_request(path) == {'mode': 'asr_test'}
+    assert main.read_diagnostic_request(path) is None
+
+
+def test_tts_and_full_chain_commands_keep_only_allowed_test_fields(tmp_path):
+    path = tmp_path / 'voice-diagnostics-command.json'
+    path.write_text('{"mode":"tts_test","text":"测试播放","voice":"voice-a","credential":"secret"}', encoding='utf-8')
+    assert main.read_diagnostic_request(path) == {'mode': 'tts_test', 'text': '测试播放', 'voice': 'voice-a'}
+    path.write_text('{"mode":"full_chain_test","text":"must-not-leak"}', encoding='utf-8')
+    assert main.read_diagnostic_request(path) == {'mode': 'full_chain_test'}
+
+
+def test_asr_test_runs_only_transcription_and_keeps_the_full_result():
+    from audio_adapter import AudioSegment
+    from speech_models import SpeechModels
+
+    models = SpeechModels(lambda _: '华子，检查项目。', lambda _: pytest.fail('voiceprint must not run'))
+    runtime = VoiceRuntime(object(), object(), object(), models=models)
+    events = []
+    runtime.record = lambda kind, **fields: events.append((kind, fields))
+    segment = AudioSegment(np.ones(16000, dtype=np.float32) * .1, 16000, 3, 2., 1.)
+    asyncio.run(runtime._run_asr_test(segment))
+    assert events[-1] == ('asr.test.completed', {
+        'segment_id': 3, 'result': 'completed', 'transcript': '华子，检查项目。', 'characters': 8,
+        'duration_ms': events[-1][1]['duration_ms'],
+    })
+
+
+def test_full_chain_test_runs_owner_and_tts_without_bridge_submission():
+    from audio_adapter import AudioSegment, OwnerDecision
+    from speech_models import SpeechModels
+
+    models = SpeechModels(lambda _: '测试内容', lambda item: OwnerDecision('owner', .9, 'verified', item.segment_id, 'cam++', 'p'))
+    runtime = VoiceRuntime(object(), object(), object(), models=models)
+    spoken = []
+    runtime.output = SimpleNamespace(say=lambda text, voice=None: spoken.append((text, voice)) or asyncio.sleep(0))
+    runtime.roles = {'roles': [{'bot_id': 'b', 'tts_voice': 'voice-b'}]}
+    runtime._full_chain_bot_id = 'b'
+    events = []
+    runtime.record = lambda kind, **fields: events.append((kind, fields))
+    segment = AudioSegment(np.ones(16000, dtype=np.float32) * .1, 16000, 4, 2., 1.)
+    asyncio.run(runtime._run_full_chain_test(segment))
+    assert spoken == [('语音链路测试完成。', 'voice-b')]
+    assert events[-1][0] == 'full_chain.test.completed'
+    assert events[-1][1]['result'] == 'completed'
+
+
 def test_voiceprint_test_runs_owner_verification_without_bridge_submission():
     from audio_adapter import AudioSegment, OwnerDecision
     from speech_models import SpeechModels

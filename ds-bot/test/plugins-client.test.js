@@ -126,6 +126,24 @@ test('Phone Agent settings provides a voice test panel with wake and owner metri
   await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '清零测试数据').click())
 })
 
+test('Phone Agent has a dedicated voice test center with separate ASR and audio sections', async t => {
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {
+      asrTestState: 'completed', asrTestTranscript: '华子，检查项目。', asrTestDurationMs: 321,
+    } } }),
+    phoneAgentAsrTest: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: { asrTestState: 'requested' } } }),
+    phoneAgentDiagnosticsReset: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
+  } })
+  assert.match(document.body.textContent, /语音测试中心/)
+  assert.match(document.body.textContent, /麦克风与音频输入/)
+  assert.match(document.body.textContent, /唤醒词测试/)
+  assert.match(document.body.textContent, /ASR 测试/)
+  assert.match(document.body.textContent, /主人声纹测试/)
+  assert.match(document.body.textContent, /TTS 与扬声器测试/)
+  assert.match(document.body.textContent, /完整链路测试/)
+  assert.match(document.body.textContent, /华子，检查项目。/)
+})
+
 test('Phone Agent settings can start a voiceprint-only test without a wake word', async t => {
   let called = 0
   const document = await mount(t, PhoneAgentSettings, { actions: {
