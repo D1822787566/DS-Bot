@@ -191,6 +191,7 @@ export function PhoneAgentSettings({ actions }) {
         h('div', null, h('h3', null, t('Voice test panel')),
           h('p', { className: 'bt-note' }, t('Clear counters, then try the wake word and a short request several times. This panel keeps only counts and safe scores; it does not keep audio or transcripts.'))),
         h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentDiagnosticsReset, 'Test counters cleared') }, t('Clear test counters'))),
+      h('p', { className: 'bt-phone-summary', role: 'status' }, voiceTestSummary(metrics)),
       h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
         h('span', null, t('Microphone frames')), h('strong', null, String(metric('microphoneFrames'))),
         h('span', null, t('Input drops')), h('strong', null, String(metric('microphoneDrops'))),
@@ -233,6 +234,29 @@ export function PhoneAgentSettings({ actions }) {
   )
 }
 
+export function voiceTestSummary(metrics = {}) {
+  const frames = Number(metrics.microphoneFrames ?? 0)
+  if (!frames) return 'No microphone audio has arrived yet.'
+  const peak = Number(metrics.microphonePeak ?? 0)
+  const rms = Number(metrics.microphoneRms ?? 0)
+  const wakeResults = Number(metrics.wakeKeywordResults ?? 0)
+  const wakePublished = Number(metrics.wakePublished ?? 0)
+  const segments = Number(metrics.segmentEnded ?? 0)
+  const asrAttempted = Number(metrics.asrAttempted ?? 0)
+  const asrCompleted = Number(metrics.asrCompleted ?? 0)
+  const ownerRejected = Number(metrics.ownerRejected ?? 0)
+  const ownerFailed = Number(metrics.ownerFailed ?? 0)
+  if (wakeResults === 0 && segments === 0) {
+    if (rms < .01 && peak < 2500) return 'Audio is arriving, but it is almost silent. No wake word or speech was detected, so ASR and owner verification did not run.'
+    return 'Audio is arriving, but no wake word or speech was detected. ASR and owner verification did not run.'
+  }
+  if (wakePublished === 0) return 'Speech is reaching the microphone, but no configured wake word was detected.'
+  if (segments === 0) return 'A wake word was detected, but no speech segment reached VAD.'
+  if (asrAttempted > 0 && asrCompleted === 0) return 'Speech segments reached ASR, but no transcript completed.'
+  if (ownerRejected > 0 || ownerFailed > 0) return 'ASR completed, but owner verification rejected or could not score the segment.'
+  return 'The voice path is producing wake, speech and owner verification results.'
+}
+
 export const PLUGIN_CSS = `
 .bt-preset-tools{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}
 .bt-preset-tools h2{font-size:18px;margin:0 0 6px}.bt-preset-tools h3{font-size:14px;margin:24px 0 10px}
@@ -247,5 +271,5 @@ export const PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
 `

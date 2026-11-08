@@ -17,7 +17,7 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
-const { BotPresets, PresetPicker, PhoneAgentSettings, openPluginManager } = module.exports
+const { BotPresets, PresetPicker, PhoneAgentSettings, openPluginManager, voiceTestSummary } = module.exports
 
 async function mount(t, component, props) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
@@ -124,6 +124,13 @@ test('Phone Agent settings provides a voice test panel with wake and owner metri
   assert.match(document.body.textContent, /Wake detections/)
   assert.match(document.body.textContent, /Owner verified/)
   await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === 'Clear test counters').click())
+})
+
+test('voice test summary explains when only near-silent microphone audio arrived', () => {
+  const summary = voiceTestSummary({ microphoneFrames: 12051, microphonePeak: 1721, microphoneRms: .002,
+    wakeKeywordResults: 0, wakePublished: 0, segmentEnded: 0, asrAttempted: 0, ownerVerified: 0 })
+  assert.match(summary, /almost silent/)
+  assert.match(summary, /ASR and owner verification did not run/)
 })
 
 test('Phone Agent settings shows the Bot selected by a wake event', async t => {
