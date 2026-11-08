@@ -186,27 +186,27 @@ export function PhoneAgentSettings({ actions }) {
          diagnostics.lastError ? h('pre', { className: 'bt-phone-diagnostic' }, diagnostics.lastError) : null,
          diagnostics.lastOutput ? h('span', null, t('Last stdout')) : null,
          diagnostics.lastOutput ? h('pre', { className: 'bt-phone-diagnostic' }, diagnostics.lastOutput) : null) : null),
-    h('section', { className: 'bt-phone-card', 'aria-label': t('Voice test panel') },
+    h('section', { className: 'bt-phone-card', 'aria-label': '语音测试面板' },
       h('div', { className: 'bt-phone-panel-heading' },
-        h('div', null, h('h3', null, t('Voice test panel')),
-          h('p', { className: 'bt-note' }, t('Clear counters, then try the wake word and a short request several times. This panel keeps only counts and safe scores; it does not keep audio or transcripts.'))),
-        h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentDiagnosticsReset, 'Test counters cleared') }, t('Clear test counters'))),
+        h('div', null, h('h3', null, '语音测试面板'),
+          h('p', { className: 'bt-note' }, '先清零数据，然后连续说几次唤醒词和简短指令。这里仅保存计数和安全分数，不保存音频或完整转写。')),
+        h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(actions.phoneAgentDiagnosticsReset, '测试数据已清零') }, '清零测试数据')),
       h('p', { className: 'bt-phone-summary', role: 'status' }, voiceTestSummary(metrics)),
       h('div', { className: 'bt-phone-diagnostic-grid', role: 'status' },
-        h('span', null, t('Microphone frames')), h('strong', null, String(metric('microphoneFrames'))),
-        h('span', null, t('Input drops')), h('strong', null, String(metric('microphoneDrops'))),
-        h('span', null, t('Microphone peak / RMS')), h('strong', null, `${metric('microphonePeak')} / ${Number(metric('microphoneRms')).toFixed(3)}`),
-        h('span', null, t('Wake detections')), h('strong', null, `${metric('wakePublished')} / ${metric('wakeAccepted')} accepted`),
-        h('span', null, t('Keyword results')), h('strong', null, `${metric('wakeKeywordResults')} (${metric('wakeUnknownKeywords')} unknown)`),
-        h('span', null, t('Speech segments')), h('strong', null, `${metric('segmentEnded')} ended / ${metric('segmentDropped')} dropped`),
-        h('span', null, t('ASR completed')), h('strong', null, `${metric('asrCompleted')} / ${metric('asrAttempted')}`),
-        h('span', null, t('Owner verified')), h('strong', null, `${metric('ownerVerified')} verified / ${metric('ownerRejected')} rejected / ${metric('ownerFailed')} failed`),
-        h('span', null, t('Owner score')), h('strong', null, `${ownerScore} (${metrics.ownerMinScore ?? '—'}–${metrics.ownerMaxScore ?? '—'})`),
-        h('span', null, t('Bot submissions')), h('strong', null, `${metric('inputAccepted')} accepted / ${metric('inputRejected')} rejected`)),
+        h('span', null, '麦克风帧数'), h('strong', null, String(metric('microphoneFrames'))),
+        h('span', null, '输入丢帧'), h('strong', null, String(metric('microphoneDrops'))),
+        h('span', null, '麦克风峰值 / 平均音量'), h('strong', null, `${metric('microphonePeak')} / ${Number(metric('microphoneRms')).toFixed(3)}`),
+        h('span', null, '唤醒检测'), h('strong', null, `${metric('wakePublished')} 次 / ${metric('wakeAccepted')} 次确认`),
+        h('span', null, '唤醒词识别结果'), h('strong', null, `${metric('wakeKeywordResults')} 次（未知 ${metric('wakeUnknownKeywords')} 次）`),
+        h('span', null, '语音段'), h('strong', null, `${metric('segmentEnded')} 段完成 / ${metric('segmentDropped')} 段丢弃`),
+        h('span', null, '语音转写完成'), h('strong', null, `${metric('asrCompleted')} / ${metric('asrAttempted')}`),
+        h('span', null, '主人声纹'), h('strong', null, `${metric('ownerVerified')} 次通过 / ${metric('ownerRejected')} 次拒绝 / ${metric('ownerFailed')} 次失败`),
+        h('span', null, '声纹分数'), h('strong', null, `${ownerScore}（${metrics.ownerMinScore ?? '—'}–${metrics.ownerMaxScore ?? '—'}）`),
+        h('span', null, 'Bot 提交'), h('strong', null, `${metric('inputAccepted')} 次通过 / ${metric('inputRejected')} 次拒绝`)),
       Array.isArray(metrics.recent) && metrics.recent.length
-        ? h('details', { className: 'bt-phone-recent' }, h('summary', null, t('Recent diagnostic events')),
+        ? h('details', { className: 'bt-phone-recent' }, h('summary', null, '最近诊断事件'),
           h('ul', null, metrics.recent.slice().reverse().map((event, index) => h('li', { key: `${event.type}-${index}` },
-            `${event.type}${event.segmentId === undefined ? '' : ` · segment ${event.segmentId}`}${event.reason ? ` · ${event.reason}` : ''}${typeof event.score === 'number' ? ` · score ${event.score.toFixed(3)}` : ''}`))))
+            `${({ 'windows.wake.published': '唤醒词命中', 'runtime.wake': '唤醒已确认', 'audio.segment.started': '开始接收语音', 'audio.segment.ended': '语音段完成', 'audio.segment.dropped': '语音段丢弃', 'asr.completed': '语音转写完成', 'asr.failed': '语音转写失败', 'identity.verified': '主人声纹通过', 'identity.rejected': '主人声纹拒绝', 'owner.failed': '主人声纹失败', 'input.submit': '提交给 Bot', 'input.accepted': 'Bot 接收成功', 'input.rejected': 'Bot 拒绝接收' }[event.type] ?? event.type)}${event.segmentId === undefined ? '' : ` · 第 ${event.segmentId} 段`}${event.reason ? ` · ${event.reason}` : ''}${typeof event.score === 'number' ? ` · 分数 ${event.score.toFixed(3)}` : ''}`))))
         : null),
     error ? h('div', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
     message ? h('p', { role: 'status' }, message) : null,
@@ -236,7 +236,7 @@ export function PhoneAgentSettings({ actions }) {
 
 export function voiceTestSummary(metrics = {}) {
   const frames = Number(metrics.microphoneFrames ?? 0)
-  if (!frames) return 'No microphone audio has arrived yet.'
+  if (!frames) return '还没有收到麦克风音频。'
   const peak = Number(metrics.microphonePeak ?? 0)
   const rms = Number(metrics.microphoneRms ?? 0)
   const wakeResults = Number(metrics.wakeKeywordResults ?? 0)
@@ -247,14 +247,14 @@ export function voiceTestSummary(metrics = {}) {
   const ownerRejected = Number(metrics.ownerRejected ?? 0)
   const ownerFailed = Number(metrics.ownerFailed ?? 0)
   if (wakeResults === 0 && segments === 0) {
-    if (rms < .01 && peak < 2500) return 'Audio is arriving, but it is almost silent. No wake word or speech was detected, so ASR and owner verification did not run.'
-    return 'Audio is arriving, but no wake word or speech was detected. ASR and owner verification did not run.'
+    if (rms < .01 && peak < 2500) return '已收到麦克风音频，但音量接近静音。没有检测到唤醒词或语音，因此没有进行语音转写和主人声纹验证。'
+    return '已收到麦克风音频，但没有检测到唤醒词或语音。因此没有进行语音转写和主人声纹验证。'
   }
-  if (wakePublished === 0) return 'Speech is reaching the microphone, but no configured wake word was detected.'
-  if (segments === 0) return 'A wake word was detected, but no speech segment reached VAD.'
-  if (asrAttempted > 0 && asrCompleted === 0) return 'Speech segments reached ASR, but no transcript completed.'
-  if (ownerRejected > 0 || ownerFailed > 0) return 'ASR completed, but owner verification rejected or could not score the segment.'
-  return 'The voice path is producing wake, speech and owner verification results.'
+  if (wakePublished === 0) return '麦克风收到了声音，但没有检测到已配置的唤醒词。'
+  if (segments === 0) return '已检测到唤醒词，但没有形成可处理的语音段。'
+  if (asrAttempted > 0 && asrCompleted === 0) return '语音段已送入语音转写，但没有完成转写。'
+  if (ownerRejected > 0 || ownerFailed > 0) return '语音转写完成，但主人声纹拒绝了这段声音或无法计算分数。'
+  return '唤醒、语音段和主人声纹验证都有结果。'
 }
 
 export const PLUGIN_CSS = `

@@ -120,17 +120,17 @@ test('Phone Agent settings provides a voice test panel with wake and owner metri
     } }),
     phoneAgentDiagnosticsReset: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
   } })
-  assert.match(document.body.textContent, /Voice test panel/)
-  assert.match(document.body.textContent, /Wake detections/)
-  assert.match(document.body.textContent, /Owner verified/)
-  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === 'Clear test counters').click())
+  assert.match(document.body.textContent, /语音测试面板/)
+  assert.match(document.body.textContent, /唤醒检测/)
+  assert.match(document.body.textContent, /主人声纹/)
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '清零测试数据').click())
 })
 
 test('voice test summary explains when only near-silent microphone audio arrived', () => {
   const summary = voiceTestSummary({ microphoneFrames: 12051, microphonePeak: 1721, microphoneRms: .002,
     wakeKeywordResults: 0, wakePublished: 0, segmentEnded: 0, asrAttempted: 0, ownerVerified: 0 })
-  assert.match(summary, /almost silent/)
-  assert.match(summary, /ASR and owner verification did not run/)
+  assert.match(summary, /音量接近静音/)
+  assert.match(summary, /没有进行语音转写和主人声纹验证/)
 })
 
 test('Phone Agent settings shows the Bot selected by a wake event', async t => {
