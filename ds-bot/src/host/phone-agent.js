@@ -30,7 +30,9 @@ export function emptyPhoneAgentMetrics() {
     asrAttempted: 0, asrCompleted: 0, asrFailed: 0, lastAsrError: '',
     ownerVerified: 0, ownerRejected: 0, ownerFailed: 0, lastOwnerError: '', ownerLastScore: null, ownerMinScore: null, ownerMaxScore: null,
     inputSubmitted: 0, inputAccepted: 0, inputRejected: 0,
-    voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestResult: '',
+    voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestStopped: 0,
+    voiceprintTestActive: false, voiceprintTestState: 'idle', voiceprintTestResult: '',
+    voiceprintTestLastSegmentId: null, voiceprintTestLastDurationMs: null,
     voiceprintCandidateReady: false, voiceprintCandidateSegmentId: null,
     voiceprintPendingSamples: 0, voiceprintApprovedSamples: 0, recent: [],
     asrTestStarted: 0, asrTestCompleted: 0, asrTestState: 'idle', asrTestResult: '',
@@ -83,14 +85,29 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
   } else if (type === 'input.submit') metrics.inputSubmitted++
   else if (type === 'input.accepted') metrics.inputAccepted++
   else if (type === 'input.rejected') metrics.inputRejected++
-  else if (type === 'voice.test.ready') metrics.voiceprintTestStarted++
-  else if (type === 'voice.test.completed') {
+  else if (type === 'voice.test.ready') {
+    metrics.voiceprintTestStarted++
+    metrics.voiceprintTestActive = true
+    metrics.voiceprintTestState = 'listening'
+    metrics.voiceprintTestResult = ''
+  } else if (type === 'voice.test.started') {
+    metrics.voiceprintTestState = 'recognizing'
+    metrics.voiceprintTestLastSegmentId = Number.isInteger(event.segment_id) ? event.segment_id : null
+  } else if (type === 'voice.test.completed') {
     metrics.voiceprintTestCompleted++
     metrics.voiceprintTestResult = statusCode(event.result) || ''
+    metrics.voiceprintTestState = metrics.voiceprintTestActive ? 'listening' : metrics.voiceprintTestState
+    metrics.voiceprintTestLastSegmentId = Number.isInteger(event.segment_id) ? event.segment_id : null
+    metrics.voiceprintTestLastDurationMs = metricNumber(event.duration_ms) ?? null
     metrics.voiceprintCandidateReady = event.labelable === true && Number.isInteger(event.segment_id)
     metrics.voiceprintCandidateSegmentId = metrics.voiceprintCandidateReady ? event.segment_id : null
     metrics.voiceprintPendingSamples = metricNumber(event.pending_samples) ?? metrics.voiceprintPendingSamples
     metrics.voiceprintApprovedSamples = metricNumber(event.approved_samples) ?? metrics.voiceprintApprovedSamples
+  } else if (type === 'voice.test.stopped') {
+    metrics.voiceprintTestStopped++
+    metrics.voiceprintTestActive = false
+    metrics.voiceprintTestState = 'stopped'
+    metrics.voiceprintTestResult = statusCode(event.result) || 'stopped'
   } else if (type === 'voice.profile.status' || type === 'voice.sample.labeled' || type === 'voice.sample.applied' || type === 'voice.sample.discarded') {
     metrics.voiceprintPendingSamples = metricNumber(event.pending_samples) ?? metrics.voiceprintPendingSamples
     metrics.voiceprintApprovedSamples = metricNumber(event.approved_samples) ?? metrics.voiceprintApprovedSamples
@@ -864,7 +881,7 @@ export class RuntimeManager {
   }
   requestVoiceprintCommand(mode, segmentId) {
     if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a voiceprint test')
-    if (!['voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'].includes(mode)) throw new Error('Unknown voiceprint command')
+    if (!['voiceprint', 'voiceprint_start', 'voiceprint_stop', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'].includes(mode)) throw new Error('Unknown voiceprint command')
     if (mode === 'voiceprint_label' && (!Number.isInteger(segmentId) || segmentId < 0)) throw new Error('A voiceprint test segment is required')
     mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
     const payload = { mode, created_at: new Date().toISOString() }
@@ -872,7 +889,9 @@ export class RuntimeManager {
     writeFileSync(this.diagnosticCommandPath, JSON.stringify(payload), { encoding: 'utf8', mode: 0o600 })
     return this.view()
   }
-  requestVoiceprintTest() { return this.requestVoiceprintCommand('voiceprint') }
+  requestVoiceprintTest() { return this.requestVoiceprintStart() }
+  requestVoiceprintStart() { return this.requestVoiceprintCommand('voiceprint_start') }
+  requestVoiceprintStop() { return this.requestVoiceprintCommand('voiceprint_stop') }
   labelVoiceprintSample(segmentId) { return this.requestVoiceprintCommand('voiceprint_label', segmentId) }
   applyVoiceprintSamples() { return this.requestVoiceprintCommand('voiceprint_apply') }
   discardVoiceprintSamples() { return this.requestVoiceprintCommand('voiceprint_discard') }
@@ -944,14 +963,17 @@ export function install(rt) {
   const phoneAgentAsrTest = () => { manager.requestAsrTest(); return phoneAgent() }
   const phoneAgentTtsTest = body => { manager.requestTtsTest(body?.text, body?.voice); return phoneAgent() }
   const phoneAgentFullChainTest = () => { manager.requestFullChainTest(); return phoneAgent() }
-  const phoneAgentVoiceprintTest = () => { manager.requestVoiceprintTest(); return phoneAgent() }
+  const phoneAgentVoiceprintStart = () => { manager.requestVoiceprintStart(); return phoneAgent() }
+  const phoneAgentVoiceprintStop = () => { manager.requestVoiceprintStop(); return phoneAgent() }
+  const phoneAgentVoiceprintTest = phoneAgentVoiceprintStart
   const phoneAgentVoiceprintLabel = segmentId => { manager.labelVoiceprintSample(segmentId); return phoneAgent() }
   const phoneAgentVoiceprintApply = () => { manager.applyVoiceprintSamples(); return phoneAgent() }
   const phoneAgentVoiceprintDiscard = () => { manager.discardVoiceprintSamples(); return phoneAgent() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
   Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset,
     phoneAgentAsrTest, phoneAgentTtsTest, phoneAgentFullChainTest,
-    phoneAgentVoiceprintTest, phoneAgentVoiceprintLabel, phoneAgentVoiceprintApply, phoneAgentVoiceprintDiscard, phoneAgentSubmit })
+    phoneAgentVoiceprintStart, phoneAgentVoiceprintStop, phoneAgentVoiceprintTest,
+    phoneAgentVoiceprintLabel, phoneAgentVoiceprintApply, phoneAgentVoiceprintDiscard, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.
   const desktopRuntime = process.env.DS_BOT_APP === '1'

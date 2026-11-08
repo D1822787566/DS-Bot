@@ -178,6 +178,22 @@ def test_voiceprint_command_is_consumed_once(tmp_path):
     assert read_voiceprint_command(path) is None
 
 
+def test_voiceprint_test_stays_armed_until_explicit_stop(tmp_path):
+    path = tmp_path / 'voice-diagnostics-command.json'
+    runtime = VoiceRuntime(object(), object(), object(), config={'diagnosticCommandPath': str(path)})
+    events = []
+    runtime.record = lambda kind, **fields: events.append((kind, fields))
+    path.write_text('{"mode":"voiceprint_start"}', encoding='utf-8')
+    runtime._poll_diagnostic_command()
+    assert runtime._voiceprint_mode is True
+    runtime._poll_diagnostic_command()
+    assert runtime._voiceprint_mode is True
+    path.write_text('{"mode":"voiceprint_stop"}', encoding='utf-8')
+    runtime._poll_diagnostic_command()
+    assert runtime._voiceprint_mode is False
+    assert [kind for kind, _ in events] == ['voice.test.ready', 'voice.test.stopped']
+
+
 def test_voiceprint_label_command_is_consumed_and_preserves_segment_id(tmp_path):
     path = tmp_path / 'voice-diagnostics-command.json'
     path.write_text('{"mode":"voiceprint_label","segment_id":7}', encoding='utf-8')

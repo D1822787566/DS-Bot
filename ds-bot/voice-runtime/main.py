@@ -60,7 +60,11 @@ def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
     return result
 
 
-DIAGNOSTIC_COMMANDS = {'voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard', 'asr_test', 'tts_test', 'full_chain_test'}
+DIAGNOSTIC_COMMANDS = {
+    'voiceprint', 'voiceprint_start', 'voiceprint_stop', 'voiceprint_label',
+    'voiceprint_apply', 'voiceprint_discard', 'asr_test', 'tts_test',
+    'full_chain_test',
+}
 
 
 def read_diagnostic_request(path):
@@ -534,7 +538,6 @@ class VoiceRuntime:
         self._wake_confirmation = None
         self._closing = False
         self._voiceprint_mode = False
-        self._voiceprint_started_at = 0.0
         self._voiceprint_candidate = None
         self._asr_test_mode = False
         self._asr_test_started_at = 0.0
@@ -685,7 +688,7 @@ class VoiceRuntime:
                     self._full_chain_wake = False
                     self._spawn(self._run_full_chain_test(segment))
                 elif self._voiceprint_mode:
-                    self._voiceprint_mode = False
+                    self.record('voice.test.started', segment_id=segment.segment_id)
                     self._spawn(self._run_voiceprint_test(segment))
                 elif self.input:
                     self.input.offer(segment)
@@ -698,16 +701,14 @@ class VoiceRuntime:
             self._full_chain_mode = False
             self._full_chain_wake = False
             self.record('full_chain.test.completed', result='timeout')
-        if self._voiceprint_mode and time.monotonic() - self._voiceprint_started_at > 20:
-            self._voiceprint_mode = False
-            self._voiceprint_candidate = None
-            self.record('voice.test.completed', result='timeout')
         request = read_diagnostic_request(self.config.get('diagnosticCommandPath', ''))
         if not request:
             return
         mode = request['mode']
         if mode == 'asr_test':
-            self._voiceprint_mode = False
+            if self._voiceprint_mode:
+                self._voiceprint_mode = False
+                self.record('voice.test.stopped', result='superseded')
             self._full_chain_mode = False
             self._full_chain_wake = False
             self._asr_test_mode = True
@@ -719,21 +720,26 @@ class VoiceRuntime:
             return
         if mode == 'full_chain_test':
             self._asr_test_mode = False
-            self._voiceprint_mode = False
+            if self._voiceprint_mode:
+                self._voiceprint_mode = False
+                self.record('voice.test.stopped', result='superseded')
             self._full_chain_mode = True
             self._full_chain_wake = False
             self._full_chain_started_at = time.monotonic()
             self._full_chain_bot_id = None
             self.record('full_chain.test.ready', result='say_wake_word')
             return
-        if mode == 'voiceprint':
+        if mode in ('voiceprint', 'voiceprint_start'):
             self._asr_test_mode = False
             self._full_chain_mode = False
             self._full_chain_wake = False
             self._voiceprint_mode = True
-            self._voiceprint_started_at = time.monotonic()
             self._voiceprint_candidate = None
-            self.record('voice.test.ready', result='speak_now')
+            self.record('voice.test.ready', result='listening')
+            return
+        if mode == 'voiceprint_stop':
+            self._voiceprint_mode = False
+            self.record('voice.test.stopped', result='stopped')
             return
         if mode == 'voiceprint_label':
             candidate = self._voiceprint_candidate
@@ -852,6 +858,7 @@ class VoiceRuntime:
         status = self.models.profile_status() if hasattr(self.models, 'profile_status') else {}
         self.record('voice.test.completed', segment_id=segment.segment_id,
                     result='owner_verified' if verified else 'owner_rejected', labelable=labelable,
+                    duration_ms=round(max(0., time.monotonic() - started) * 1000, 3),
                     **{key: status[key] for key in ('pending_samples', 'approved_samples') if key in status})
 
     async def _on_wake(self, payload):

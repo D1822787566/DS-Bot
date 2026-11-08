@@ -15353,6 +15353,9 @@ function PhoneAgentTestCenter({ actions, value, runtime, metrics, busy, run: run
   const asrState = metrics.asrTestState ?? "idle";
   const asrStateLabel = { idle: "未开始", requested: "等待下一段语音", ready: "请直接说话", recognizing: "识别中", completed: "识别完成", failed: "识别失败", timeout: "测试超时" }[asrState] ?? asrState;
   const asrTranscript = metrics.asrTestTranscript || (asrState === "ready" || asrState === "requested" ? "请直接说一句话。测试不会提交给 Bot。" : "暂无识别结果。");
+  const voiceprintStart = actions.phoneAgentVoiceprintStart ?? actions.phoneAgentVoiceprintTest;
+  const voiceprintActive = metrics.voiceprintTestActive === true || metrics.voiceprintTestState === "listening" || metrics.voiceprintTestState === "recognizing";
+  const voiceprintStateLabel = { idle: "未启动", listening: "持续监听中", recognizing: "正在识别", stopped: "已停止", error: "发生错误" }[metrics.voiceprintTestState ?? "idle"] ?? "未启动";
   const voiceprintReviewText = metrics.voiceprintTestResult === "owner_rejected" ? "这段语音的主人声纹没有通过。请确认这是不是你的声音。" : "这段语音已经通过主人声纹。确认后可以把它加入主人声纹样本。";
   return (0, import_react34.createElement)(
     "section",
@@ -15368,11 +15371,10 @@ function PhoneAgentTestCenter({ actions, value, runtime, metrics, busy, run: run
           "div",
           { className: "bt-phone-panel-actions" },
           (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy || !actions.phoneAgentAsrTest, onClick: () => run2(actions.phoneAgentAsrTest, "ASR 测试已准备，请直接说话") }, "测试 ASR（下一段语音）"),
-          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentVoiceprintTest, "声纹测试已准备，请直接说话") }, "测试主人声纹"),
           (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentDiagnosticsReset, "测试数据已清零") }, "清空本轮结果")
         )
       ),
-      (0, import_react34.createElement)("p", { className: "bt-phone-summary", role: "status" }, `当前运行状态：${runtime.state} · ASR 测试：${asrStateLabel}`)
+      (0, import_react34.createElement)("p", { className: "bt-phone-summary", role: "status" }, `当前运行状态：${runtime.state} · ASR 测试：${asrStateLabel} · 声纹测试：${voiceprintStateLabel}`)
     ),
     (0, import_react34.createElement)(
       "section",
@@ -15444,14 +15446,29 @@ function PhoneAgentTestCenter({ actions, value, runtime, metrics, busy, run: run
     (0, import_react34.createElement)(
       "section",
       { className: "bt-phone-card" },
-      (0, import_react34.createElement)("h3", null, "主人声纹测试"),
+      (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-panel-heading" },
+        (0, import_react34.createElement)(
+          "div",
+          null,
+          (0, import_react34.createElement)("h3", null, "主人声纹测试"),
+          (0, import_react34.createElement)("p", { className: "bt-note" }, "启动后会持续监听。每段语音结束都会进行一次 ASR 和主人声纹验证，直到点击停止；测试内容不会提交给 Bot。")
+        ),
+        (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy || (voiceprintActive ? !actions.phoneAgentVoiceprintStop : !voiceprintStart), onClick: () => run2(voiceprintActive ? actions.phoneAgentVoiceprintStop : voiceprintStart, voiceprintActive ? "声纹测试已停止" : "声纹测试已启动") }, voiceprintActive ? "停止声纹测试" : "启动声纹测试")
+      ),
+      (0, import_react34.createElement)("p", { className: "bt-phone-test-state", role: "status" }, `状态：${voiceprintStateLabel} · 已测试 ${metrics.voiceprintTestCompleted ?? 0} 段`),
       (0, import_react34.createElement)(
         "div",
         { className: "bt-phone-diagnostic-grid", role: "status" },
         (0, import_react34.createElement)("span", null, "通过 / 拒绝 / 失败"),
         (0, import_react34.createElement)("strong", null, `${metric("ownerVerified")} / ${metric("ownerRejected")} / ${metric("ownerFailed")}`),
         (0, import_react34.createElement)("span", null, "分数"),
-        (0, import_react34.createElement)("strong", null, `${ownerScore}（${metrics.ownerMinScore ?? "—"}–${metrics.ownerMaxScore ?? "—"}）`)
+        (0, import_react34.createElement)("strong", null, `${ownerScore}（${metrics.ownerMinScore ?? "—"}–${metrics.ownerMaxScore ?? "—"}）`),
+        (0, import_react34.createElement)("span", null, "最近语音段"),
+        (0, import_react34.createElement)("strong", null, metrics.voiceprintTestLastSegmentId ?? "—"),
+        (0, import_react34.createElement)("span", null, "最近耗时"),
+        (0, import_react34.createElement)("strong", null, metrics.voiceprintTestLastDurationMs === null || metrics.voiceprintTestLastDurationMs === void 0 ? "—" : `${metrics.voiceprintTestLastDurationMs} ms`)
       ),
       voiceprintCandidateReady ? (0, import_react34.createElement)(
         "div",
@@ -15631,7 +15648,6 @@ function PhoneAgentSettings({ actions }) {
         (0, import_react34.createElement)(
           "div",
           { className: "bt-phone-panel-actions" },
-          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentVoiceprintTest, "声纹测试已准备，请直接说话") }, "测试声纹（下一段语音）"),
           (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentDiagnosticsReset, "测试数据已清零") }, "清零测试数据")
         )
       ),
@@ -15684,7 +15700,7 @@ function PhoneAgentSettings({ actions }) {
         (0, import_react34.createElement)("ul", null, metrics.recent.slice().reverse().map((event, index) => (0, import_react34.createElement)(
           "li",
           { key: `${event.type}-${index}` },
-          `${{ "windows.wake.published": "唤醒词命中", "runtime.wake": "唤醒已确认", "audio.segment.started": "开始接收语音", "audio.segment.ended": "语音段完成", "audio.segment.dropped": "语音段丢弃", "asr.completed": "语音转写完成", "asr.failed": "语音转写失败", "identity.verified": "主人声纹通过", "identity.rejected": "主人声纹拒绝", "owner.failed": "主人声纹失败", "input.submit": "提交给 Bot", "input.accepted": "Bot 接收成功", "input.rejected": "Bot 拒绝接收" }[event.type] ?? event.type}${event.segmentId === void 0 ? "" : ` · 第 ${event.segmentId} 段`}${event.reason ? ` · ${event.reason}` : ""}${typeof event.score === "number" ? ` · 分数 ${event.score.toFixed(3)}` : ""}`
+          `${{ "windows.wake.published": "唤醒词命中", "runtime.wake": "唤醒已确认", "audio.segment.started": "开始接收语音", "audio.segment.ended": "语音段完成", "audio.segment.dropped": "语音段丢弃", "asr.completed": "语音转写完成", "asr.failed": "语音转写失败", "identity.verified": "主人声纹通过", "identity.rejected": "主人声纹拒绝", "owner.failed": "主人声纹失败", "voice.test.ready": "声纹测试已启动", "voice.test.started": "开始验证声纹样本", "voice.test.completed": "声纹样本验证完成", "voice.test.stopped": "声纹测试已停止", "input.submit": "提交给 Bot", "input.accepted": "Bot 接收成功", "input.rejected": "Bot 拒绝接收" }[event.type] ?? event.type}${event.segmentId === void 0 ? "" : ` · 第 ${event.segmentId} 段`}${event.reason ? ` · ${event.reason}` : ""}${typeof event.score === "number" ? ` · 分数 ${event.score.toFixed(3)}` : ""}`
         )))
       ) : null
     ),
@@ -15755,7 +15771,10 @@ function voiceTestSummary(metrics = {}) {
   const ownerFailed = Number(metrics.ownerFailed ?? 0);
   const voiceprintStarted = Number(metrics.voiceprintTestStarted ?? 0);
   const voiceprintCompleted = Number(metrics.voiceprintTestCompleted ?? 0);
-  if (voiceprintStarted > voiceprintCompleted) return "声纹测试已准备。请现在直接说一句话，不需要先说唤醒词。";
+  if (metrics.voiceprintTestActive === true || metrics.voiceprintTestState === "listening" || metrics.voiceprintTestState === "recognizing") {
+    return metrics.voiceprintTestState === "recognizing" ? "声纹测试正在识别当前语音段。说完后可以继续说下一段。" : `声纹测试持续监听中，已完成 ${voiceprintCompleted} 段。`;
+  }
+  if (voiceprintStarted > voiceprintCompleted) return "声纹测试已启动。请直接说话，不需要先说唤醒词。";
   if (voiceprintCompleted > 0) {
     if (metrics.voiceprintTestResult === "owner_verified") return "声纹测试完成：主人声纹通过。";
     if (metrics.voiceprintTestResult === "owner_rejected") return "声纹测试完成：主人声纹没有通过。";
@@ -23250,6 +23269,8 @@ function apply(ctx) {
   actions.phoneAgentTtsTest = (body) => call("phone-agent-tts-test", body);
   actions.phoneAgentFullChainTest = () => call("phone-agent-full-chain-test");
   actions.phoneAgentVoiceprintTest = () => call("phone-agent-voiceprint-test");
+  actions.phoneAgentVoiceprintStart = () => call("phone-agent-voiceprint-start");
+  actions.phoneAgentVoiceprintStop = () => call("phone-agent-voiceprint-stop");
   actions.phoneAgentVoiceprintLabel = (segmentId) => call("phone-agent-voiceprint-label", { segmentId });
   actions.phoneAgentVoiceprintApply = () => call("phone-agent-voiceprint-apply");
   actions.phoneAgentVoiceprintDiscard = () => call("phone-agent-voiceprint-discard");

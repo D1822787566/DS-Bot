@@ -679,6 +679,8 @@ export function apply(ctx) {
   actions.phoneAgentTtsTest = body => call('phone-agent-tts-test', body)
   actions.phoneAgentFullChainTest = () => call('phone-agent-full-chain-test')
   actions.phoneAgentVoiceprintTest = () => call('phone-agent-voiceprint-test')
+  actions.phoneAgentVoiceprintStart = () => call('phone-agent-voiceprint-start')
+  actions.phoneAgentVoiceprintStop = () => call('phone-agent-voiceprint-stop')
   actions.phoneAgentVoiceprintLabel = segmentId => call('phone-agent-voiceprint-label', { segmentId })
   actions.phoneAgentVoiceprintApply = () => call('phone-agent-voiceprint-apply')
   actions.phoneAgentVoiceprintDiscard = () => call('phone-agent-voiceprint-discard')

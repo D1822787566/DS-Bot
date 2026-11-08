@@ -144,16 +144,32 @@ test('Phone Agent has a dedicated voice test center with separate ASR and audio 
   assert.match(document.body.textContent, /华子，检查项目。/)
 })
 
-test('Phone Agent settings can start a voiceprint-only test without a wake word', async t => {
+test('Phone Agent settings can start the continuous voiceprint test without a wake word', async t => {
   let called = 0
   const document = await mount(t, PhoneAgentSettings, { actions: {
     phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
-    phoneAgentVoiceprintTest: async () => { called++; return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } } },
+    phoneAgentVoiceprintStart: async () => { called++; return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: { voiceprintTestActive: true, voiceprintTestState: 'listening' } } } },
   } })
-  const button = [...document.querySelectorAll('button')].find(node => node.textContent === '测试声纹（下一段语音）')
+  const button = [...document.querySelectorAll('button')].find(node => node.textContent === '启动声纹测试')
   assert.ok(button)
   await act(async () => button.click())
   assert.equal(called, 1)
+})
+
+test('Phone Agent settings keeps the voiceprint test running until the user stops it', async t => {
+  const calls = []
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {
+      voiceprintTestActive: false, voiceprintTestState: 'idle', voiceprintTestCompleted: 0,
+    } } }),
+    phoneAgentVoiceprintStart: async () => { calls.push('start'); return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: { voiceprintTestActive: true, voiceprintTestState: 'listening' } } } },
+    phoneAgentVoiceprintStop: async () => { calls.push('stop'); return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: { voiceprintTestActive: false, voiceprintTestState: 'stopped' } } } },
+  } })
+  const start = [...document.querySelectorAll('button')].find(node => node.textContent === '启动声纹测试')
+  assert.ok(start)
+  await act(async () => start.click())
+  assert.deepEqual(calls, ['start'])
+  assert.match(document.body.textContent, /持续监听/)
 })
 
 test('Phone Agent settings binds explicit voiceprint labeling to the latest test segment', async t => {

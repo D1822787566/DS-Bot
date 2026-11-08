@@ -136,6 +136,31 @@ test('managed runtime exposes an explicit ASR test command', async t => {
   assert.equal(result.metrics.asrTestState, 'requested')
 })
 
+test('managed runtime starts and stops a continuous voiceprint test', t => {
+  const manager = new phoneAgent.RuntimeManager({}, { spawnProcess: () => assert.fail('must not spawn') })
+  manager.child = { pid: 1 }
+  manager.runtimeReady = true
+  t.after(() => { try { unlinkSync(manager.diagnosticCommandPath) } catch {} })
+  manager.requestVoiceprintStart()
+  assert.equal(JSON.parse(readFileSync(manager.diagnosticCommandPath, 'utf8')).mode, 'voiceprint_start')
+  manager.requestVoiceprintStop()
+  assert.equal(JSON.parse(readFileSync(manager.diagnosticCommandPath, 'utf8')).mode, 'voiceprint_stop')
+})
+
+test('voiceprint test metrics stay active across multiple samples until stopped', () => {
+  const metrics = phoneAgent.emptyPhoneAgentMetrics()
+  phoneAgent.recordPhoneAgentMetric(metrics, { type: 'voice.test.ready', result: 'listening' })
+  phoneAgent.recordPhoneAgentMetric(metrics, { type: 'voice.test.completed', segment_id: 1, result: 'owner_verified', labelable: false })
+  phoneAgent.recordPhoneAgentMetric(metrics, { type: 'voice.test.completed', segment_id: 2, result: 'owner_rejected', labelable: true })
+  assert.equal(metrics.voiceprintTestActive, true)
+  assert.equal(metrics.voiceprintTestState, 'listening')
+  assert.equal(metrics.voiceprintTestCompleted, 2)
+  assert.equal(metrics.voiceprintTestLastSegmentId, 2)
+  phoneAgent.recordPhoneAgentMetric(metrics, { type: 'voice.test.stopped', result: 'stopped' })
+  assert.equal(metrics.voiceprintTestActive, false)
+  assert.equal(metrics.voiceprintTestState, 'stopped')
+})
+
 test('managed runtime writes bounded TTS and dry-run full-chain test commands', t => {
   const manager = new phoneAgent.RuntimeManager({}, { spawnProcess: () => assert.fail('must not spawn') })
   manager.child = { pid: 1 }

@@ -188,6 +188,8 @@ export function install(rt) {
           await rt.load()
           return ok(rt.phoneAgentFullChainTest())
         case 'phone-agent-voiceprint-test': return ok(rt.phoneAgentVoiceprintTest())
+        case 'phone-agent-voiceprint-start': return ok(rt.phoneAgentVoiceprintStart())
+        case 'phone-agent-voiceprint-stop': return ok(rt.phoneAgentVoiceprintStop())
         case 'phone-agent-voiceprint-label':
           await rt.load()
           return ok(rt.phoneAgentVoiceprintLabel(body.segmentId))
