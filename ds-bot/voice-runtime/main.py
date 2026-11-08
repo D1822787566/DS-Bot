@@ -46,6 +46,9 @@ def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
     if not result["device_id"] or not result["target_id"]:
         raise ValueError("DS Bot device identity is required")
     result.update(config)
+    diagnostic_command = values.get("DS_BOT_VOICE_DIAGNOSTICS_COMMAND", "").strip()
+    if diagnostic_command:
+        result["diagnosticCommandPath"] = diagnostic_command
     if not str(result.get("windowsWakeModelDir", "")).strip():
         candidates = [
             values.get("DS_BOT_WAKE_MODEL_DIR", ""),
@@ -55,6 +58,18 @@ def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
             (candidate for candidate in candidates
              if candidate and Path(candidate, "tokens.txt").is_file()), "")
     return result
+
+
+def read_voiceprint_command(path):
+    if not path:
+        return None
+    path = Path(path)
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        path.unlink(missing_ok=True)
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return None
+    return payload.get('mode') if isinstance(payload, dict) and payload.get('mode') == 'voiceprint' else None
 
 
 class NullTTS:
@@ -493,6 +508,8 @@ class VoiceRuntime:
         self._controls = set()
         self._wake_confirmation = None
         self._closing = False
+        self._voiceprint_mode = False
+        self._voiceprint_started_at = 0.0
         self.output = VoiceOutput(
             bridge, tts, playback,
             owns=lambda correlation: self.input.owns_output(correlation) if self.input else True,
@@ -621,8 +638,45 @@ class VoiceRuntime:
 
     def _on_pcm(self, pcm):
         if self.segmenter:
+            self._poll_voiceprint_command()
             for segment in self.segmenter.feed(pcm, now=time.monotonic()):
-                self.input.offer(segment)
+                if self._voiceprint_mode:
+                    self._voiceprint_mode = False
+                    self._spawn(self._run_voiceprint_test(segment))
+                elif self.input:
+                    self.input.offer(segment)
+
+    def _poll_voiceprint_command(self):
+        if self._voiceprint_mode and time.monotonic() - self._voiceprint_started_at > 20:
+            self._voiceprint_mode = False
+            self.record('voice.test.completed', result='timeout')
+        if self._voiceprint_mode:
+            return
+        mode = read_voiceprint_command(self.config.get('diagnosticCommandPath', ''))
+        if mode == 'voiceprint':
+            self._voiceprint_mode = True
+            self._voiceprint_started_at = time.monotonic()
+            self.record('voice.test.ready', result='speak_now')
+
+    async def _run_voiceprint_test(self, segment):
+        started = time.monotonic()
+        try:
+            text, owner = await self.models.recognize(segment)
+        except SpeechFailure as error:
+            error_code = str(error)
+            failure_kind = 'owner.failed' if error_code.startswith('speaker') else 'asr.failed'
+            self.record(failure_kind, segment_id=segment.segment_id, error_code=error_code,
+                        duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+            self.record('voice.test.completed', segment_id=segment.segment_id, result='failed')
+            return
+        verified = owner.identity == 'owner' and owner.status == 'verified'
+        event = 'identity.verified' if verified else 'identity.rejected'
+        self.record(event, segment_id=segment.segment_id, score=owner.score, status=owner.status)
+        if verified and isinstance(text, str) and text.strip():
+            self.record('asr.completed', segment_id=segment.segment_id, characters=len(text),
+                        duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+        self.record('voice.test.completed', segment_id=segment.segment_id,
+                    result='owner_verified' if verified else 'owner_rejected')
 
     async def _on_wake(self, payload):
         if self.input is None:

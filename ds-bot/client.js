@@ -15472,7 +15472,12 @@ function PhoneAgentSettings({ actions }) {
           (0, import_react34.createElement)("h3", null, "语音测试面板"),
           (0, import_react34.createElement)("p", { className: "bt-note" }, "先清零数据，然后连续说几次唤醒词和简短指令。这里仅保存计数和安全分数，不保存音频或完整转写。")
         ),
-        (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentDiagnosticsReset, "测试数据已清零") }, "清零测试数据")
+        (0, import_react34.createElement)(
+          "div",
+          { className: "bt-phone-panel-actions" },
+          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentVoiceprintTest, "声纹测试已准备，请直接说话") }, "测试声纹（下一段语音）"),
+          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentDiagnosticsReset, "测试数据已清零") }, "清零测试数据")
+        )
       ),
       (0, import_react34.createElement)("p", { className: "bt-phone-summary", role: "status" }, voiceTestSummary(metrics)),
       (0, import_react34.createElement)(
@@ -15575,6 +15580,14 @@ function voiceTestSummary(metrics = {}) {
   const asrCompleted = Number(metrics.asrCompleted ?? 0);
   const ownerRejected = Number(metrics.ownerRejected ?? 0);
   const ownerFailed = Number(metrics.ownerFailed ?? 0);
+  const voiceprintStarted = Number(metrics.voiceprintTestStarted ?? 0);
+  const voiceprintCompleted = Number(metrics.voiceprintTestCompleted ?? 0);
+  if (voiceprintStarted > voiceprintCompleted) return "声纹测试已准备。请现在直接说一句话，不需要先说唤醒词。";
+  if (voiceprintCompleted > 0) {
+    if (metrics.voiceprintTestResult === "owner_verified") return "声纹测试完成：主人声纹通过。";
+    if (metrics.voiceprintTestResult === "owner_rejected") return "声纹测试完成：主人声纹没有通过。";
+    return "声纹测试完成，但模型没有得到有效结果。";
+  }
   if (wakeResults === 0 && segments === 0) {
     if (rms < 0.01 && peak < 2500) return "已收到麦克风音频，但音量接近静音。没有检测到唤醒词或语音，因此没有进行语音转写和主人声纹验证。";
     return "已收到麦克风音频，但没有检测到唤醒词或语音。因此没有进行语音转写和主人声纹验证。";
@@ -15599,7 +15612,7 @@ var PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
 `;
 
 // src/client/create-bot.js
@@ -23060,6 +23073,7 @@ function apply(ctx) {
   actions.phoneAgentStop = () => call("phone-agent-stop");
   actions.phoneAgentTest = () => call("phone-agent-test");
   actions.phoneAgentDiagnosticsReset = () => call("phone-agent-diagnostics-reset");
+  actions.phoneAgentVoiceprintTest = () => call("phone-agent-voiceprint-test");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);

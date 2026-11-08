@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 
 import main
-from main import choose_input_device, choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime, StreamingPcm16Resampler
+from main import choose_input_device, choose_output_device, resample_pcm16, runtime_config_from_env, VoiceRuntime, StreamingPcm16Resampler, read_voiceprint_command
 from bridge_client import BridgeEvent
 
 
@@ -169,6 +169,28 @@ def test_streaming_input_resampler_preserves_chunk_boundaries():
     chunks = [source[offset:offset + 960] for offset in range(0, len(source), 960)]
     result = b''.join(resampler.push(chunk) for chunk in chunks) + resampler.flush()
     assert result == expected
+
+
+def test_voiceprint_command_is_consumed_once(tmp_path):
+    path = tmp_path / 'voice-diagnostics-command.json'
+    path.write_text('{"mode":"voiceprint"}', encoding='utf-8')
+    assert read_voiceprint_command(path) == 'voiceprint'
+    assert read_voiceprint_command(path) is None
+
+
+def test_voiceprint_test_runs_owner_verification_without_bridge_submission():
+    from audio_adapter import AudioSegment, OwnerDecision
+    from speech_models import SpeechModels
+
+    models = SpeechModels(lambda _: '测试语音', lambda item:
+                          OwnerDecision('owner', .91, 'verified', item.segment_id, 'cam++', 'profile'))
+    runtime = VoiceRuntime(object(), object(), object(), models=models)
+    events = []
+    runtime.record = lambda kind, **fields: events.append((kind, fields))
+    segment = AudioSegment(np.ones(16000, dtype=np.float32) * .1, 16000, 1, 2., 1.)
+    asyncio.run(runtime._run_voiceprint_test(segment))
+    assert [kind for kind, _ in events] == ['identity.verified', 'asr.completed', 'voice.test.completed']
+    assert events[-1][1]['result'] == 'owner_verified'
 
 
 def test_idle_bridge_timeout_does_not_shutdown_the_runtime():

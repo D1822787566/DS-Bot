@@ -29,7 +29,8 @@ export function emptyPhoneAgentMetrics() {
     segmentStarted: 0, segmentEnded: 0, segmentDropped: 0, segmentDropReasons: {},
     asrAttempted: 0, asrCompleted: 0, asrFailed: 0, lastAsrError: '',
     ownerVerified: 0, ownerRejected: 0, ownerFailed: 0, lastOwnerError: '', ownerLastScore: null, ownerMinScore: null, ownerMaxScore: null,
-    inputSubmitted: 0, inputAccepted: 0, inputRejected: 0, recent: [],
+    inputSubmitted: 0, inputAccepted: 0, inputRejected: 0,
+    voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestResult: '', recent: [],
   }
 }
 
@@ -75,6 +76,11 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
   } else if (type === 'input.submit') metrics.inputSubmitted++
   else if (type === 'input.accepted') metrics.inputAccepted++
   else if (type === 'input.rejected') metrics.inputRejected++
+  else if (type === 'voice.test.ready') metrics.voiceprintTestStarted++
+  else if (type === 'voice.test.completed') {
+    metrics.voiceprintTestCompleted++
+    metrics.voiceprintTestResult = statusCode(event.result) || ''
+  }
 
   if (type !== 'windows.wake.audio') {
     const recent = { type }
@@ -90,7 +96,7 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
 function safeRuntimeLine(line) {
   try {
     const event = JSON.parse(String(line))
-    if (typeof event?.type !== 'string' || !/^(runtime|windows|audio|input|output|asr|owner|identity|continuation)\.[a-zA-Z0-9._]+$/.test(event.type)) return ''
+    if (typeof event?.type !== 'string' || !/^(runtime|windows|audio|input|output|asr|owner|identity|continuation|voice)\.[a-zA-Z0-9._]+$/.test(event.type)) return ''
     const safe = { type: event.type }
     for (const key of ['state', 'stage', 'error_code', 'result', 'bot_id', 'wake_session_id', 'status', 'reason']) {
       if (statusCode(event[key])) safe[key] = event[key]
@@ -273,6 +279,10 @@ export function migratePhoneAgentOwnedConfig(config, privateRoot = resolve(voice
 
 export function voiceRuntimeContinuationConfigPath() {
   return resolve(voiceRuntimeEnvironmentRoot(), '..', 'voice-runtime-private', 'continuation.env')
+}
+
+export function voiceRuntimeDiagnosticsCommandPath() {
+  return join(dirname(voiceRuntimeContinuationConfigPath()), 'voice-diagnostics-command.json')
 }
 
 export function migratePhoneAgentContinuationConfig(config = {}, {
@@ -581,6 +591,7 @@ export class RuntimeManager {
     this.errorCode = ''
     this.lastResult = ''
     this.metrics = emptyPhoneAgentMetrics()
+    this.diagnosticCommandPath = voiceRuntimeDiagnosticsCommandPath()
     this.runtimeReady = false
     this.starting = false
     this.timeout = null
@@ -607,6 +618,7 @@ export class RuntimeManager {
     if (this.state === 'error' && (this.child || this.preparation)) await this.stop()
     if (this.child || this.preparation || this.starting) return this.view()
     const generation = ++this.generation
+    try { unlinkSync(this.diagnosticCommandPath) } catch { /* no pending voiceprint test */ }
     this.starting = true
     this.runtimeReady = false
     this.state = 'starting'
@@ -724,6 +736,7 @@ export class RuntimeManager {
         DS_BOT_DEVICE_ID: config.deviceId,
         DS_BOT_TARGET_ID: config.targetId,
         DS_BOT_CONTINUATION_CONFIG: voiceRuntimeContinuationConfigPath(),
+        DS_BOT_VOICE_DIAGNOSTICS_COMMAND: this.diagnosticCommandPath,
         DS_BOT_VOICE_CONFIG: JSON.stringify({
           ...config,
           runtimeRoot: undefined,
@@ -756,6 +769,7 @@ export class RuntimeManager {
     this.preparation = null
     const bridge = this.bridge
     this.bridge = null
+    try { unlinkSync(this.diagnosticCommandPath) } catch { /* no pending voiceprint test */ }
     await bridge?.stop?.()
     return this.view()
   }
@@ -764,6 +778,12 @@ export class RuntimeManager {
   rolesChanged() { this.bridge?.rolesChanged() }
   diagnose(config) { return phoneAgentRuntimeDiagnostics(config, this.view()) }
   resetMetrics() { this.metrics = emptyPhoneAgentMetrics(); return this.view() }
+  requestVoiceprintTest() {
+    if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a voiceprint test')
+    mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
+    writeFileSync(this.diagnosticCommandPath, JSON.stringify({ mode: 'voiceprint', created_at: new Date().toISOString() }), { encoding: 'utf8', mode: 0o600 })
+    return this.view()
+  }
 }
 
 export function install(rt) {
@@ -829,8 +849,9 @@ export function install(rt) {
   const phoneAgentStop = async () => { state.prefs.phoneAgent.enabled = false; await manager.stop(); return save() }
   const phoneAgentTest = () => ({ ...phoneAgent(), diagnostics: manager.diagnose(state.prefs.phoneAgent) })
   const phoneAgentDiagnosticsReset = () => { manager.resetMetrics(); return phoneAgent() }
+  const phoneAgentVoiceprintTest = () => { manager.requestVoiceprintTest(); return phoneAgent() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
-  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset, phoneAgentSubmit })
+  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset, phoneAgentVoiceprintTest, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.
   const desktopRuntime = process.env.DS_BOT_APP === '1'

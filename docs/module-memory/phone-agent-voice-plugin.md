@@ -53,6 +53,7 @@
 - [用户确认] D-PAVP-021 · 2026-11-07 · 首轮提交保留完整 ASR 文本，包括用户对 Bot 的称呼；仅在整段内容只有唤醒词时不提交。状态：已被 D-PAVP-022 supersede。原因：用户随后将范围扩展到连续对话中的每次提交。
 - [用户确认] D-PAVP-022 · 2026-11-07 · 每个通过声纹和连续对话准入的语音段都把完整 ASR 文本发送给对应 Bot，包括 Bot 名称、标点和文本边界；不再按首轮/后续轮次删除称呼或其他内容。只有空转写和整段只有唤醒词时不提交。原因：用户明确要求所有轮次保留完整 ASR，避免任何内容遗漏。影响：语义连续对话模型仍决定后续语音段是否准入，但准入后的 Bridge/DS Bot prompt 使用原始 ASR 文本。
 - [用户确认] D-PAVP-023 · 2026-11-07 · Phone Agent 设置提供语音测试面板：用户可以清零计数后重复测试唤醒词、ASR 和主人声纹，面板显示安全计数、音量、声纹分数和最近诊断事件，不保存 PCM、声纹原文或 ASR 文本。原因：用户反馈唤醒、ASR 和声纹成功率不稳定，需要可重复验收和定位失败阶段。影响：运行时需要保留进程内安全指标，并在输入重采样、VAD、KWS、ASR、声纹和 Bridge 阶段输出可聚合事件。
+- [用户确认] D-PAVP-024 · 2026-11-08 · 语音测试面板增加“测试声纹（下一段语音）”模式：下一段 VAD 语音直接进入 ASR/主人声纹验证，不需要先说唤醒词，也不会提交给 Bot；20 秒内没有语音则测试超时。原因：用户要区分“没有唤醒”与“声纹没有通过”。影响：需要独立的声纹测试命令和结果事件。
 
 ## 开发状态
 
@@ -72,7 +73,7 @@
 - [代码证据] 运行日志显示唤醒链路已产生 `device.wake` / `runtime.wake`，但没有 `input.submit` 或回复输出；下一阶段需要按开发文档 10.1 接入唤醒后语音段、VAD、ASR、声纹和 Bridge submit。
 - [用户确认] 首版语音交互流程已确认并写入开发文档；真实 Windows 设备验收仍未完成，不能据此标记插件验收通过。
 - [代码证据] DS Bot 自有 Python 3.12 环境已准备在 `.ds-bot-local/voice-runtime-env`，通过 pip check 和 FunASR/Torch/Torchaudio/LiveKit/Silero/Sherpa 导入验证；运行时不依赖外部 Phone Agent 虚拟环境。
-- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `94 passed, 12 subtests passed`。
+- [代码证据] `voice-runtime` 已接入有界 PCM/VAD、Paraformer/CAM++、主人声纹准入、Bot/session/generation ownership、frozen 053 续话、TTS 排队/打断、Windows AEC 边界和回复回流；Python 定向测试当前为 `96 passed, 12 subtests passed`。
 - [现状重建] 已用真实缓存音频做模型验收：主人语音转写且声纹通过；视频和 TTS 样本声纹拒绝。尚未用真实麦克风和扬声器完成 Desktop 端到端验收。
 - [代码证据] 已在当前 Windows 设备打开并关闭配置的 `C01` 麦克风和 `扬声器 (Philips SPA5308P)`；已用私有 TTS 配置合成短 PCM 回复（3 个分片，23,040 字节）。这验证了设备打开和 provider 连接，尚未验证完整 Desktop Bridge 会话。
 - [代码证据] 已修复 Windows 播放链路的音质失真：此前每个约 100 ms 的 TTS 小块单独从 16 kHz 插值到输出采样率，块边界会重置插值状态；现在使用 LiveKit 高质量有状态重采样器，跨 provider chunk 保持状态，停止时丢弃尾部，正常结束时先 flush 再停止设备。新增 7 个播放回归测试覆盖 16/44.1/48 kHz、不同 chunk 边界和打断；Python 测试为 `93 passed, 12 subtests passed`。
@@ -84,6 +85,7 @@
 - [代码证据] Phone Agent 设置已增加语音测试面板和“清零测试计数”操作；Host 聚合麦克风帧/丢帧、RMS/峰值、KWS 结果/命中/冷却丢弃、VAD 段、ASR 成功/失败、主人声纹通过/拒绝/分数和 Bridge 提交结果。最近事件只保留类型、阶段、段 ID、错误码和安全分数，不包含 PCM、完整转写或 secret。
 - [代码证据] 测试面板已增加自然语言结论：明确区分“收到近乎静音”“未检测到唤醒词”“唤醒后未形成语音段”“ASR 未完成”和“声纹拒绝”，避免用户需要自行解释计数。
 - [代码证据] 语音测试面板的标题、指标、操作按钮、结论和最近事件已改为中文，用户不需要理解英文缩写或日志代码才能判断当前阶段。
+- [代码证据] 已增加独立声纹测试：点击“测试声纹（下一段语音）”后，下一段 VAD 音频绕过唤醒门槛，运行同一套 ASR/CAM++，只输出安全结果，不进入 Bridge submit。
 - [代码证据] Windows 输入采样率转换已从每块独立 `np.interp` 改为跨麦克风块保持相位的 `StreamingPcm16Resampler`；新增回归验证分块结果与整段转换一致。运行时日志增加输入 RMS、峰值和丢块计数，用于区分低音量、设备丢帧和 KWS/模型拒绝。
 
 ## 继续入口

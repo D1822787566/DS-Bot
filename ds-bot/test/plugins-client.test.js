@@ -126,6 +126,18 @@ test('Phone Agent settings provides a voice test panel with wake and owner metri
   await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '清零测试数据').click())
 })
 
+test('Phone Agent settings can start a voiceprint-only test without a wake word', async t => {
+  let called = 0
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
+    phoneAgentVoiceprintTest: async () => { called++; return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } } },
+  } })
+  const button = [...document.querySelectorAll('button')].find(node => node.textContent === '测试声纹（下一段语音）')
+  assert.ok(button)
+  await act(async () => button.click())
+  assert.equal(called, 1)
+})
+
 test('voice test summary explains when only near-silent microphone audio arrived', () => {
   const summary = voiceTestSummary({ microphoneFrames: 12051, microphonePeak: 1721, microphoneRms: .002,
     wakeKeywordResults: 0, wakePublished: 0, segmentEnded: 0, asrAttempted: 0, ownerVerified: 0 })
