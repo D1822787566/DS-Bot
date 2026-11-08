@@ -560,7 +560,7 @@ def test_managed_runtime_connects_pcm_models_bridge_and_target_voice(monkeypatch
             await runtime.handle_event({'type': 'output.segment', 'correlation': correlation, 'payload': {'segment_index': 0, 'speak_text': '已检查'}})
             await runtime.handle_event({'type': 'output.ended', 'correlation': correlation, 'payload': {'status': 'completed'}})
             await runtime.output.drain()
-            assert item['text'] == '检查项目' and item['session_id'] == 'chat-b'
+            assert item['text'] == '华子，检查项目' and item['session_id'] == 'chat-b'
             assert tts.voices == ['bot-voice'] and len(playback.chunks) == 1
         finally:
             await runtime.stop()

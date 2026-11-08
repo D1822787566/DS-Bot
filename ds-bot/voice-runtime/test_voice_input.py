@@ -78,7 +78,7 @@ def test_first_owner_turn_enters_only_the_woken_bot_existing_session():
         clock.now = 101.
         await pipeline.process(audio())
         item = bridge.sent[0]
-        assert (item['text'], item['bot_id'], item['session_id']) == ('检查项目', 'a', 'chat-a')
+        assert (item['text'], item['bot_id'], item['session_id']) == ('华子，检查项目', 'a', 'chat-a')
         assert item['speaker']['status'] == 'owner_verified' and item['speaker']['model_id'] == 'cam++'
         assert item['wake_session_id'] == 'w1' and item['segment_id'] == 1
         assert any(kind == 'asr.completed' for kind, _ in events)
@@ -94,7 +94,7 @@ def test_name_only_does_not_submit_and_next_utterance_needs_no_second_wake():
         assert bridge.sent == []
         clock.now = 102.
         await pipeline.process(audio(2, 101.2, 102.))
-        assert [item['text'] for item in bridge.sent] == ['检查项目']
+        assert [item['text'] for item in bridge.sent] == ['华子，检查项目']
     asyncio.run(run())
 
 

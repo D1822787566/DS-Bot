@@ -172,6 +172,7 @@ class VoiceInput:
                 if self._is_name_only(text, lease.names):
                     self._state('listening', 'awaiting_speech', 'wake_name_only')
                     return
+                text = self._include_wake_name(text, lease.names)
             elif self.config.get('continuationEnabled', True) is not True:
                 self._state('listening', 'waiting_for_wake', 'wake_required')
                 return
@@ -234,6 +235,14 @@ class VoiceInput:
         value = re.sub(r'^(?:喂|嘿|嗨)[，,、\s]*', '', text.strip(), count=1)
         value = value.strip('，,。.!！?？:：、 \t')
         return any(value == name for name in names)
+
+    @staticmethod
+    def _include_wake_name(text, names):
+        """Keep the routed role visible when the wake word was a separate segment."""
+        if any(isinstance(name, str) and name and name in text for name in names):
+            return text
+        name = next((item for item in names if isinstance(item, str) and item.strip()), '')
+        return f'{name}，{text}' if name else text
 
     async def _snapshot(self, bot_id):
         result = await self.bridge.context_snapshot(bot_id, dialogue_active=self.sessions.awaiting_reply)
