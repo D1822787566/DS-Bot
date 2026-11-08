@@ -60,7 +60,10 @@ def runtime_config_from_env(values: Mapping[str, str] | None = None) -> dict:
     return result
 
 
-def read_voiceprint_command(path):
+VOICEPRINT_COMMANDS = {'voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'}
+
+
+def read_voiceprint_request(path):
     if not path:
         return None
     path = Path(path)
@@ -69,7 +72,17 @@ def read_voiceprint_command(path):
         path.unlink(missing_ok=True)
     except (FileNotFoundError, OSError, ValueError, TypeError):
         return None
-    return payload.get('mode') if isinstance(payload, dict) and payload.get('mode') == 'voiceprint' else None
+    if not isinstance(payload, dict) or payload.get('mode') not in VOICEPRINT_COMMANDS:
+        return None
+    request = {'mode': payload['mode']}
+    if isinstance(payload.get('segment_id'), int) and payload['segment_id'] >= 0:
+        request['segment_id'] = payload['segment_id']
+    return request
+
+
+def read_voiceprint_command(path):
+    request = read_voiceprint_request(path)
+    return request['mode'] if request and request['mode'] == 'voiceprint' else None
 
 
 class NullTTS:
@@ -510,6 +523,7 @@ class VoiceRuntime:
         self._closing = False
         self._voiceprint_mode = False
         self._voiceprint_started_at = 0.0
+        self._voiceprint_candidate = None
         self.output = VoiceOutput(
             bridge, tts, playback,
             owns=lambda correlation: self.input.owns_output(correlation) if self.input else True,
@@ -610,6 +624,11 @@ class VoiceRuntime:
             self.input = VoiceInput(
                 self.bridge, self.models, config=self.config, evaluator=self.evaluator,
                 notify=self.record, interrupt=self.output.interrupt, clarify=self._clarify)
+            if hasattr(self.models, 'profile_status'):
+                status = self.models.profile_status()
+                self.record('voice.profile.status',
+                            pending_samples=status.get('pending_samples', 0),
+                            approved_samples=status.get('approved_samples', 0))
             self.record("runtime.progress", stage="audio_opening")
             self.wake_runtime = WindowsWakeRuntime(self.config, self.mapping, self._on_wake)
             self.wake_runtime.on_pcm, self.wake_runtime.on_gap = self._on_pcm, self._audio_gap
@@ -649,14 +668,53 @@ class VoiceRuntime:
     def _poll_voiceprint_command(self):
         if self._voiceprint_mode and time.monotonic() - self._voiceprint_started_at > 20:
             self._voiceprint_mode = False
+            self._voiceprint_candidate = None
             self.record('voice.test.completed', result='timeout')
-        if self._voiceprint_mode:
+        request = read_voiceprint_request(self.config.get('diagnosticCommandPath', ''))
+        if not request:
             return
-        mode = read_voiceprint_command(self.config.get('diagnosticCommandPath', ''))
+        mode = request['mode']
         if mode == 'voiceprint':
             self._voiceprint_mode = True
             self._voiceprint_started_at = time.monotonic()
+            self._voiceprint_candidate = None
             self.record('voice.test.ready', result='speak_now')
+            return
+        if mode == 'voiceprint_label':
+            candidate = self._voiceprint_candidate
+            requested_segment = request.get('segment_id')
+            if candidate is None or requested_segment != candidate.get('segment_id'):
+                self.record('voice.sample.label_rejected', segment_id=requested_segment,
+                            error_code='voiceprint_candidate_missing')
+                return
+            try:
+                status = self.models.label_profile_sample(candidate)
+            except (SpeechFailure, ValueError, OSError):
+                self.record('voice.sample.label_rejected', segment_id=requested_segment,
+                            error_code='voiceprint_sample_save_failed')
+                return
+            self._voiceprint_candidate = None
+            self.record('voice.sample.labeled', segment_id=requested_segment,
+                        pending_samples=status.get('pending_samples', 0),
+                        approved_samples=status.get('approved_samples', 0))
+            return
+        if mode == 'voiceprint_apply':
+            try:
+                status = self.models.apply_profile_samples()
+            except (SpeechFailure, ValueError, OSError):
+                self.record('voice.sample.apply_rejected', error_code='voiceprint_sample_apply_failed')
+                return
+            self.record('voice.sample.applied', pending_samples=status.get('pending_samples', 0),
+                        approved_samples=status.get('approved_samples', 0))
+            return
+        if mode == 'voiceprint_discard':
+            try:
+                status = self.models.discard_profile_samples()
+            except (SpeechFailure, ValueError, OSError):
+                self.record('voice.sample.discard_rejected', error_code='voiceprint_sample_discard_failed')
+                return
+            self.record('voice.sample.discarded', pending_samples=status.get('pending_samples', 0),
+                        approved_samples=status.get('approved_samples', 0))
 
     async def _run_voiceprint_test(self, segment):
         started = time.monotonic()
@@ -672,11 +730,23 @@ class VoiceRuntime:
         verified = owner.identity == 'owner' and owner.status == 'verified'
         event = 'identity.verified' if verified else 'identity.rejected'
         self.record(event, segment_id=segment.segment_id, score=owner.score, status=owner.status)
+        embedding = getattr(owner, 'embedding', None)
+        samples = np.asarray(segment.samples, dtype=np.float32)
+        quality_ok = (samples.ndim == 1 and samples.size >= 8000 and np.all(np.isfinite(samples))
+                      and float(np.max(np.abs(samples))) >= .01)
+        labelable = (embedding is not None and owner.segment_id == segment.segment_id
+                     and bool(owner.model_id) and quality_ok)
+        self._voiceprint_candidate = ({
+            'sample_id': f'voice-test-{segment.segment_id}', 'segment_id': segment.segment_id,
+            'score': owner.score, 'embedding': embedding,
+        } if labelable else None)
         if verified and isinstance(text, str) and text.strip():
             self.record('asr.completed', segment_id=segment.segment_id, characters=len(text),
                         duration_ms=round(max(0., time.monotonic() - started) * 1000, 3))
+        status = self.models.profile_status() if hasattr(self.models, 'profile_status') else {}
         self.record('voice.test.completed', segment_id=segment.segment_id,
-                    result='owner_verified' if verified else 'owner_rejected')
+                    result='owner_verified' if verified else 'owner_rejected', labelable=labelable,
+                    **{key: status[key] for key in ('pending_samples', 'approved_samples') if key in status})
 
     async def _on_wake(self, payload):
         if self.input is None:

@@ -39,6 +39,10 @@ class OwnerDecision:
     segment_id: int | None = None
     model_id: str = ''
     profile_version: str = ''
+    # The normalized embedding is retained only inside the local runtime when
+    # the user explicitly labels a voiceprint test sample. It is never sent
+    # over the Bridge or included in diagnostics.
+    embedding: object = None
 
 
 def normalize_audio(samples: np.ndarray, sample_rate: int, target_rate: int = 16000) -> NormalizedAudio:

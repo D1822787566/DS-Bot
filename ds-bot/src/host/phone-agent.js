@@ -30,7 +30,9 @@ export function emptyPhoneAgentMetrics() {
     asrAttempted: 0, asrCompleted: 0, asrFailed: 0, lastAsrError: '',
     ownerVerified: 0, ownerRejected: 0, ownerFailed: 0, lastOwnerError: '', ownerLastScore: null, ownerMinScore: null, ownerMaxScore: null,
     inputSubmitted: 0, inputAccepted: 0, inputRejected: 0,
-    voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestResult: '', recent: [],
+    voiceprintTestStarted: 0, voiceprintTestCompleted: 0, voiceprintTestResult: '',
+    voiceprintCandidateReady: false, voiceprintCandidateSegmentId: null,
+    voiceprintPendingSamples: 0, voiceprintApprovedSamples: 0, recent: [],
   }
 }
 
@@ -80,6 +82,17 @@ export function recordPhoneAgentMetric(metrics, event = {}) {
   else if (type === 'voice.test.completed') {
     metrics.voiceprintTestCompleted++
     metrics.voiceprintTestResult = statusCode(event.result) || ''
+    metrics.voiceprintCandidateReady = event.labelable === true && Number.isInteger(event.segment_id)
+    metrics.voiceprintCandidateSegmentId = metrics.voiceprintCandidateReady ? event.segment_id : null
+    metrics.voiceprintPendingSamples = metricNumber(event.pending_samples) ?? metrics.voiceprintPendingSamples
+    metrics.voiceprintApprovedSamples = metricNumber(event.approved_samples) ?? metrics.voiceprintApprovedSamples
+  } else if (type === 'voice.profile.status' || type === 'voice.sample.labeled' || type === 'voice.sample.applied' || type === 'voice.sample.discarded') {
+    metrics.voiceprintPendingSamples = metricNumber(event.pending_samples) ?? metrics.voiceprintPendingSamples
+    metrics.voiceprintApprovedSamples = metricNumber(event.approved_samples) ?? metrics.voiceprintApprovedSamples
+    if (type !== 'voice.profile.status') {
+      metrics.voiceprintCandidateReady = false
+      metrics.voiceprintCandidateSegmentId = null
+    }
   }
 
   if (type !== 'windows.wake.audio') {
@@ -103,9 +116,10 @@ function safeRuntimeLine(line) {
     }
     if (Number.isInteger(event.segment_id) && event.segment_id >= 0) safe.segment_id = event.segment_id
     if (event.error_code === '') safe.error_code = ''
-    for (const key of ['sample_rate', 'device_index', 'frames', 'samples', 'dropped', 'dropped_chunks', 'keyword_results', 'valid_hits', 'duration_ms', 'speech_duration_ms', 'characters', 'generation', 'peak', 'rms', 'score', 'utterance_index']) {
+    for (const key of ['sample_rate', 'device_index', 'frames', 'samples', 'dropped', 'dropped_chunks', 'keyword_results', 'valid_hits', 'duration_ms', 'speech_duration_ms', 'characters', 'generation', 'peak', 'rms', 'score', 'utterance_index', 'pending_samples', 'approved_samples']) {
       if (typeof event[key] === 'number' && Number.isFinite(event[key])) safe[key] = event[key]
     }
+    if (event.labelable === true || event.labelable === false) safe.labelable = event.labelable
     if (event.wake_diagnostics && typeof event.wake_diagnostics === 'object' && !Array.isArray(event.wake_diagnostics)) {
       const diagnostics = {}
       for (const key of ['frames', 'keyword_results', 'valid_hits', 'utterance_boundaries', 'cooldown_drops', 'unknown_keywords', 'generation']) {
@@ -778,12 +792,20 @@ export class RuntimeManager {
   rolesChanged() { this.bridge?.rolesChanged() }
   diagnose(config) { return phoneAgentRuntimeDiagnostics(config, this.view()) }
   resetMetrics() { this.metrics = emptyPhoneAgentMetrics(); return this.view() }
-  requestVoiceprintTest() {
+  requestVoiceprintCommand(mode, segmentId) {
     if (!this.child || !this.runtimeReady) throw new Error('Voice runtime is not ready for a voiceprint test')
+    if (!['voiceprint', 'voiceprint_label', 'voiceprint_apply', 'voiceprint_discard'].includes(mode)) throw new Error('Unknown voiceprint command')
+    if (mode === 'voiceprint_label' && (!Number.isInteger(segmentId) || segmentId < 0)) throw new Error('A voiceprint test segment is required')
     mkdirSync(dirname(this.diagnosticCommandPath), { recursive: true, mode: 0o700 })
-    writeFileSync(this.diagnosticCommandPath, JSON.stringify({ mode: 'voiceprint', created_at: new Date().toISOString() }), { encoding: 'utf8', mode: 0o600 })
+    const payload = { mode, created_at: new Date().toISOString() }
+    if (mode === 'voiceprint_label') payload.segment_id = segmentId
+    writeFileSync(this.diagnosticCommandPath, JSON.stringify(payload), { encoding: 'utf8', mode: 0o600 })
     return this.view()
   }
+  requestVoiceprintTest() { return this.requestVoiceprintCommand('voiceprint') }
+  labelVoiceprintSample(segmentId) { return this.requestVoiceprintCommand('voiceprint_label', segmentId) }
+  applyVoiceprintSamples() { return this.requestVoiceprintCommand('voiceprint_apply') }
+  discardVoiceprintSamples() { return this.requestVoiceprintCommand('voiceprint_discard') }
 }
 
 export function install(rt) {
@@ -850,8 +872,12 @@ export function install(rt) {
   const phoneAgentTest = () => ({ ...phoneAgent(), diagnostics: manager.diagnose(state.prefs.phoneAgent) })
   const phoneAgentDiagnosticsReset = () => { manager.resetMetrics(); return phoneAgent() }
   const phoneAgentVoiceprintTest = () => { manager.requestVoiceprintTest(); return phoneAgent() }
+  const phoneAgentVoiceprintLabel = segmentId => { manager.labelVoiceprintSample(segmentId); return phoneAgent() }
+  const phoneAgentVoiceprintApply = () => { manager.applyVoiceprintSamples(); return phoneAgent() }
+  const phoneAgentVoiceprintDiscard = () => { manager.discardVoiceprintSamples(); return phoneAgent() }
   const phoneAgentSubmit = body => submitPhoneAgentInput(rt, body)
-  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset, phoneAgentVoiceprintTest, phoneAgentSubmit })
+  Object.assign(rt, { phoneAgent, phoneAgentUpdate, phoneAgentStart, phoneAgentStop, phoneAgentTest, phoneAgentDiagnosticsReset,
+    phoneAgentVoiceprintTest, phoneAgentVoiceprintLabel, phoneAgentVoiceprintApply, phoneAgentVoiceprintDiscard, phoneAgentSubmit })
   // Only the packaged Desktop host owns local Windows processes. Web hosts may
   // load the plugin and display its settings, but must never spawn audio.
   const desktopRuntime = process.env.DS_BOT_APP === '1'

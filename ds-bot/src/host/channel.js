@@ -179,6 +179,15 @@ export function install(rt) {
         case 'phone-agent-test': return ok(rt.phoneAgentTest())
         case 'phone-agent-diagnostics-reset': return ok(rt.phoneAgentDiagnosticsReset())
         case 'phone-agent-voiceprint-test': return ok(rt.phoneAgentVoiceprintTest())
+        case 'phone-agent-voiceprint-label':
+          await rt.load()
+          return ok(rt.phoneAgentVoiceprintLabel(body.segmentId))
+        case 'phone-agent-voiceprint-apply':
+          await rt.load()
+          return ok(rt.phoneAgentVoiceprintApply())
+        case 'phone-agent-voiceprint-discard':
+          await rt.load()
+          return ok(rt.phoneAgentVoiceprintDiscard())
         case 'phone-agent-update':
           await rt.load()
           return ok(await rt.phoneAgentUpdate(body))

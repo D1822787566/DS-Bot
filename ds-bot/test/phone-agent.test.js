@@ -95,6 +95,23 @@ test('aggregates safe wake, ASR and owner metrics without retaining transcripts'
   assert.equal(metrics.recent.some(item => item.text), false)
 })
 
+test('keeps a rejected voiceprint candidate available for explicit owner labeling', () => {
+  const metrics = phoneAgent.emptyPhoneAgentMetrics()
+  phoneAgent.recordPhoneAgentMetric(metrics, {
+    type: 'voice.test.completed', segment_id: 9, result: 'owner_rejected', score: .42,
+    labelable: true, pending_samples: 0, approved_samples: 3,
+  })
+  assert.equal(metrics.voiceprintCandidateReady, true)
+  assert.equal(metrics.voiceprintCandidateSegmentId, 9)
+  assert.equal(metrics.voiceprintPendingSamples, 0)
+  assert.equal(metrics.voiceprintApprovedSamples, 3)
+  phoneAgent.recordPhoneAgentMetric(metrics, {
+    type: 'voice.sample.labeled', segment_id: 9, pending_samples: 1, approved_samples: 3,
+  })
+  assert.equal(metrics.voiceprintCandidateReady, false)
+  assert.equal(metrics.voiceprintPendingSamples, 1)
+})
+
 test('runtime view survives page loads with structured startup and segment diagnostics', () => {
   const state = { prefs: { phoneAgent: defaultPhoneAgentConfig() }, bots: {} }
   const runtime = { state: 'starting', stage: 'environment_installing', errorCode: 'dependency_install_failed', lastResult: 'owner_rejected' }

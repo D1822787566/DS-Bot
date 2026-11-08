@@ -1,7 +1,7 @@
 # Phone Agent 语音插件
 
 记录状态：首版开发进行中
-最近更新：2026-11-07
+最近更新：2026-11-08
 
 ## 模块目标
 
@@ -54,6 +54,7 @@
 - [用户确认] D-PAVP-022 · 2026-11-07 · 每个通过声纹和连续对话准入的语音段都把完整 ASR 文本发送给对应 Bot，包括 Bot 名称、标点和文本边界；不再按首轮/后续轮次删除称呼或其他内容。只有空转写和整段只有唤醒词时不提交。原因：用户明确要求所有轮次保留完整 ASR，避免任何内容遗漏。影响：语义连续对话模型仍决定后续语音段是否准入，但准入后的 Bridge/DS Bot prompt 使用原始 ASR 文本。
 - [用户确认] D-PAVP-023 · 2026-11-07 · Phone Agent 设置提供语音测试面板：用户可以清零计数后重复测试唤醒词、ASR 和主人声纹，面板显示安全计数、音量、声纹分数和最近诊断事件，不保存 PCM、声纹原文或 ASR 文本。原因：用户反馈唤醒、ASR 和声纹成功率不稳定，需要可重复验收和定位失败阶段。影响：运行时需要保留进程内安全指标，并在输入重采样、VAD、KWS、ASR、声纹和 Bridge 阶段输出可聚合事件。
 - [用户确认] D-PAVP-024 · 2026-11-08 · 语音测试面板增加“测试声纹（下一段语音）”模式：下一段 VAD 语音直接进入 ASR/主人声纹验证，不需要先说唤醒词，也不会提交给 Bot；20 秒内没有语音则测试超时。原因：用户要区分“没有唤醒”与“声纹没有通过”。影响：需要独立的声纹测试命令和结果事件。
+- [用户确认] D-PAVP-025 · 2026-11-08 · 独立声纹测试完成后允许用户显式确认当前样本属于本人；样本先进入本地待应用列表，用户可以批量应用或删除。原因：用户希望纠正误拒样本，提高真实环境声纹识别率。影响：运行时只保存 CAM++ 向量和元数据，不保存 PCM 或完整转写；激活样本作为额外参考向量参与评分，并保留原始 profile 中心向量。
 
 ## 开发状态
 
@@ -87,6 +88,8 @@
 - [代码证据] 语音测试面板的标题、指标、操作按钮、结论和最近事件已改为中文，用户不需要理解英文缩写或日志代码才能判断当前阶段。
 - [代码证据] 已增加独立声纹测试：点击“测试声纹（下一段语音）”后，下一段 VAD 音频绕过唤醒门槛，运行同一套 ASR/CAM++，只输出安全结果，不进入 Bridge submit。
 - [代码证据] Windows 输入采样率转换已从每块独立 `np.interp` 改为跨麦克风块保持相位的 `StreamingPcm16Resampler`；新增回归验证分块结果与整段转换一致。运行时日志增加输入 RMS、峰值和丢块计数，用于区分低音量、设备丢帧和 KWS/模型拒绝。
+- [代码证据] 已增加声纹样本人工标注闭环：测试结果携带可标注状态和样本计数；用户确认后本地暂存 CAM++ 向量，应用后作为额外参考向量参与评分，删除或重启可恢复状态；Host 和 UI 不返回向量内容。
+- [代码证据] 新增 Node UI/Host 与 Python runtime 回归覆盖按钮绑定、命令消费、待应用/已应用计数和重启恢复；Python runtime 当前为 `99 passed, 12 subtests passed`，Node 全量测试当前为 `1713 passed, 1 skipped`。
 
 ## 继续入口
 
@@ -94,4 +97,5 @@
 - 已完成：DS Bot roles snapshot、Bot/session submit 路由、assistant 分段回流、Bridge 鉴权/状态查询、托管 Python 子进程、设置页移除外部 Phone Agent 路径、运行诊断和自检面板、迁移 runtime 定向测试；已修复 runtime 将 `BridgeEvent` 错当作 roster mapping 的启动错误、Windows 重复音频设备名导致的 sounddevice 歧义错误、WASAPI 设备 48 kHz 与 TTS 16 kHz 的采样率不匹配、跨 TTS chunk 的重采样边界失真、Bridge 空闲超时误退出、桌面打包依赖缓存旧 runtime 文件、一个不支持的英文默认唤醒词导致整个 Windows runtime 无法启动的问题，以及唤醒候选未发送到 DS Bot Bridge 的问题。
 - [候选建议] 若用户确认 `longanlingxi_v3.1` 听感清晰，将其作为首版默认音色保留；`longshao_v3.1` 仍可在每个 Bot 的音色设置中手动切回。
 - 需要继续：使用语音测试面板完成 Windows 真实麦克风、主人声纹、TTS 网络回复、扬声器播放、Bot 切换和重连验收；根据面板中低音量、丢帧、KWS、ASR 或声纹失败计数继续定位物理设备问题。
+- 需要继续：在 Windows 真实设备上完成“声纹拒绝 → 确认这是我 → 应用待应用样本 → 重启复测”的物理验收，并观察误拒率是否下降。
 - 验证入口：`node --import ./test/harness-resolve.mjs --test test/phone-agent.test.js test/voice-bridge.test.js test/plugins-client.test.js`；`python -m compileall -q voice-runtime`；`C:\Program Files\Python314\python.exe -m pytest -q ds-bot/voice-runtime`；受控 Windows 检查需看到 `windows.audio.input_ready`、`runtime.ready` 且唤醒任务持续运行。现有 launcher 过渡代码不作为完成标准。

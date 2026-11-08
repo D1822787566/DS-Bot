@@ -178,6 +178,14 @@ def test_voiceprint_command_is_consumed_once(tmp_path):
     assert read_voiceprint_command(path) is None
 
 
+def test_voiceprint_label_command_is_consumed_and_preserves_segment_id(tmp_path):
+    path = tmp_path / 'voice-diagnostics-command.json'
+    path.write_text('{"mode":"voiceprint_label","segment_id":7}', encoding='utf-8')
+    request = main.read_voiceprint_request(path)
+    assert request == {'mode': 'voiceprint_label', 'segment_id': 7}
+    assert main.read_voiceprint_request(path) is None
+
+
 def test_voiceprint_test_runs_owner_verification_without_bridge_submission():
     from audio_adapter import AudioSegment, OwnerDecision
     from speech_models import SpeechModels
@@ -191,6 +199,49 @@ def test_voiceprint_test_runs_owner_verification_without_bridge_submission():
     asyncio.run(runtime._run_voiceprint_test(segment))
     assert [kind for kind, _ in events] == ['identity.verified', 'asr.completed', 'voice.test.completed']
     assert events[-1][1]['result'] == 'owner_verified'
+
+
+def test_voiceprint_candidate_requires_explicit_label_before_apply(tmp_path):
+    class Models:
+        def __init__(self):
+            self.labeled = []
+            self.applied = 0
+            self.discarded = 0
+
+        def profile_status(self):
+            return {'pending_samples': len(self.labeled), 'approved_samples': self.applied}
+
+        def label_profile_sample(self, candidate):
+            self.labeled.append(candidate)
+            return self.profile_status()
+
+        def apply_profile_samples(self):
+            self.applied += len(self.labeled)
+            self.labeled.clear()
+            return self.profile_status()
+
+        def discard_profile_samples(self):
+            self.labeled.clear()
+            return self.profile_status()
+
+    command = tmp_path / 'voice-command.json'
+    models = Models()
+    runtime = VoiceRuntime(object(), object(), object(), models=models,
+                           config={'diagnosticCommandPath': str(command)})
+    events = []
+    runtime.record = lambda kind, **fields: events.append((kind, fields))
+    runtime._voiceprint_candidate = {
+        'sample_id': 'voice-test-7', 'segment_id': 7, 'score': .42,
+        'embedding': np.array([1., 0.]),
+    }
+    command.write_text('{"mode":"voiceprint_label","segment_id":7}', encoding='utf-8')
+    runtime._poll_voiceprint_command()
+    assert models.labeled and runtime._voiceprint_candidate is None
+    assert events[-1][0] == 'voice.sample.labeled'
+    command.write_text('{"mode":"voiceprint_apply"}', encoding='utf-8')
+    runtime._poll_voiceprint_command()
+    assert models.applied == 1
+    assert events[-1][0] == 'voice.sample.applied'
 
 
 def test_idle_bridge_timeout_does_not_shutdown_the_runtime():

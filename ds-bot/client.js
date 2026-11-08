@@ -15394,6 +15394,10 @@ function PhoneAgentSettings({ actions }) {
   const metrics = runtime.metrics ?? {};
   const metric = (key, fallback = 0) => metrics[key] ?? fallback;
   const ownerScore = typeof metrics.ownerLastScore === "number" ? metrics.ownerLastScore.toFixed(3) : "—";
+  const voiceprintCandidateReady = metrics.voiceprintCandidateReady === true && Number.isInteger(metrics.voiceprintCandidateSegmentId);
+  const voiceprintPendingSamples = Number(metrics.voiceprintPendingSamples ?? 0);
+  const voiceprintApprovedSamples = Number(metrics.voiceprintApprovedSamples ?? 0);
+  const voiceprintReviewText = metrics.voiceprintTestResult === "owner_rejected" ? "这段语音的主人声纹没有通过。请确认这是不是你的声音。" : "这段语音已经通过主人声纹。确认后可以把它加入主人声纹样本。";
   const stageLabels = {
     environment_checking: "Checking voice environment",
     environment_creating: "Creating voice environment",
@@ -15480,6 +15484,23 @@ function PhoneAgentSettings({ actions }) {
         )
       ),
       (0, import_react34.createElement)("p", { className: "bt-phone-summary", role: "status" }, voiceTestSummary(metrics)),
+      voiceprintCandidateReady ? (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-voiceprint-review", role: "status" },
+        (0, import_react34.createElement)("p", null, voiceprintReviewText),
+        (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.phoneAgentVoiceprintLabel(metrics.voiceprintCandidateSegmentId), "已加入待应用声纹样本") }, "确认这是我，加入主人声纹")
+      ) : null,
+      voiceprintPendingSamples > 0 ? (0, import_react34.createElement)(
+        "div",
+        { className: "bt-phone-voiceprint-samples", role: "status" },
+        (0, import_react34.createElement)("span", null, `待应用样本：${voiceprintPendingSamples} 段 · 已应用样本：${voiceprintApprovedSamples} 段`),
+        (0, import_react34.createElement)(
+          "div",
+          { className: "bt-phone-panel-actions" },
+          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentVoiceprintApply, "主人声纹样本已应用") }, "应用待应用样本"),
+          (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(actions.phoneAgentVoiceprintDiscard, "待应用样本已删除") }, "删除待应用样本")
+        )
+      ) : null,
       (0, import_react34.createElement)(
         "div",
         { className: "bt-phone-diagnostic-grid", role: "status" },
@@ -15612,7 +15633,7 @@ var PLUGIN_CSS = `
 .bt-preset-bot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0;border-bottom:1px solid var(--bt-line)}
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
-.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+.bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
 `;
 
 // src/client/create-bot.js
@@ -23074,6 +23095,9 @@ function apply(ctx) {
   actions.phoneAgentTest = () => call("phone-agent-test");
   actions.phoneAgentDiagnosticsReset = () => call("phone-agent-diagnostics-reset");
   actions.phoneAgentVoiceprintTest = () => call("phone-agent-voiceprint-test");
+  actions.phoneAgentVoiceprintLabel = (segmentId) => call("phone-agent-voiceprint-label", { segmentId });
+  actions.phoneAgentVoiceprintApply = () => call("phone-agent-voiceprint-apply");
+  actions.phoneAgentVoiceprintDiscard = () => call("phone-agent-voiceprint-discard");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);

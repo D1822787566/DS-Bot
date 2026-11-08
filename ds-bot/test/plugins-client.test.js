@@ -138,6 +138,23 @@ test('Phone Agent settings can start a voiceprint-only test without a wake word'
   assert.equal(called, 1)
 })
 
+test('Phone Agent settings binds explicit voiceprint labeling to the latest test segment', async t => {
+  const calls = []
+  const document = await mount(t, PhoneAgentSettings, { actions: {
+    phoneAgent: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {
+      voiceprintTestCompleted: 1, voiceprintTestResult: 'owner_rejected', voiceprintCandidateReady: true,
+      voiceprintCandidateSegmentId: 9, voiceprintPendingSamples: 0, voiceprintApprovedSamples: 3,
+    } } }),
+    phoneAgentVoiceprintLabel: async segmentId => { calls.push(['label', segmentId]); return { config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: { voiceprintPendingSamples: 1 } } } },
+    phoneAgentVoiceprintApply: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
+    phoneAgentVoiceprintDiscard: async () => ({ config: { enabled: true }, bots: [], runtime: { state: 'listening', metrics: {} } }),
+  } })
+  const label = [...document.querySelectorAll('button')].find(node => node.textContent.includes('确认这是我'))
+  assert.ok(label)
+  await act(async () => label.click())
+  assert.deepEqual(calls, [['label', 9]])
+})
+
 test('voice test summary explains when only near-silent microphone audio arrived', () => {
   const summary = voiceTestSummary({ microphoneFrames: 12051, microphonePeak: 1721, microphoneRms: .002,
     wakeKeywordResults: 0, wakePublished: 0, segmentEnded: 0, asrAttempted: 0, ownerVerified: 0 })

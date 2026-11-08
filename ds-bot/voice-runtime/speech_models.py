@@ -14,9 +14,10 @@ class SpeechFailure(RuntimeError):
 
 
 class SpeechModels:
-    def __init__(self, transcribe, verify, *, asr_timeout=20., speaker_timeout=5.):
+    def __init__(self, transcribe, verify, *, asr_timeout=20., speaker_timeout=5., profile=None):
         self.transcribe, self.verify = transcribe, verify
         self.asr_timeout, self.speaker_timeout = asr_timeout, speaker_timeout
+        self.profile = profile
         self.pending = set()
 
     def _finished(self, task):
@@ -29,6 +30,27 @@ class SpeechModels:
         self.pending.add(task)
         task.add_done_callback(self._finished)
         return task
+
+    def profile_status(self):
+        return self.profile.status() if self.profile is not None and hasattr(self.profile, 'status') else {
+            'pending_samples': 0, 'approved_samples': 0,
+        }
+
+    def label_profile_sample(self, candidate):
+        if self.profile is None or not candidate or candidate.get('embedding') is None:
+            raise SpeechFailure('voiceprint_candidate_missing')
+        return self.profile.add_pending(candidate['embedding'], sample_id=candidate.get('sample_id'),
+                                        segment_id=candidate.get('segment_id'), score=candidate.get('score'))
+
+    def apply_profile_samples(self):
+        if self.profile is None:
+            raise SpeechFailure('voiceprint_profile_unavailable')
+        return self.profile.apply_pending()
+
+    def discard_profile_samples(self):
+        if self.profile is None:
+            raise SpeechFailure('voiceprint_profile_unavailable')
+        return self.profile.discard_pending()
 
     async def recognize(self, segment):
         # Native inference cannot be killed by cancelling the awaiter. Retain
@@ -92,4 +114,4 @@ def load_speech_models(config, hotwords):
         raise SpeechFailure('speech_dependencies_missing') from None
     except Exception:
         raise SpeechFailure('speech_models_load_failed') from None
-    return SpeechModels(asr.transcribe_segment, SpeakerProfileAdapter(profile).verify_segment)
+    return SpeechModels(asr.transcribe_segment, SpeakerProfileAdapter(profile).verify_segment, profile=profile)
