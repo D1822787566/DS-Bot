@@ -211,6 +211,22 @@ export function install(rt) {
         case 'phone-agent-submit':
           await rt.load()
           return ok(await rt.phoneAgentSubmit(body))
+        case 'moss-live': return ok(rt.mossLive())
+        case 'moss-live-update':
+          await rt.load()
+          return ok(await rt.mossLiveUpdate(body))
+        case 'moss-live-set-key':
+          await rt.load()
+          return ok(await rt.mossLiveSetKey(body))
+        case 'moss-live-clear-key':
+          await rt.load()
+          return ok(await rt.mossLiveClearKey())
+        case 'moss-live-start':
+          await rt.load()
+          return ok(await rt.mossLiveStart())
+        case 'moss-live-stop':
+          await rt.load()
+          return ok(await rt.mossLiveStop())
         case 'plugin-search': return ok(await rt.pluginSearch(body))
         case 'plugin-change': return ok(await rt.pluginChange(body))
         case 'preset-check': return ok(await rt.checkBotPreset(String(body.id ?? '')))

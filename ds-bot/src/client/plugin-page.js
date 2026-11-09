@@ -1,5 +1,6 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { hostText, t } from './i18n.js'
+import { MossLiveSession } from './moss-live.js'
 
 const LABELS = { unchecked: 'Not checked', checking: 'Checking compatibility', ready: 'Ready for Bot', partial: 'Partially compatible', single: 'Single chat only', unverified: 'Needs verification', incompatible: 'Not compatible', failed: 'Check failed', outdated: 'Check outdated' }
 
@@ -336,6 +337,93 @@ export function PhoneAgentSettings({ actions }) {
   )
 }
 
+export function MossLiveSettings({ actions }) {
+  const [value, setValue] = useState(null)
+  const [draft, setDraft] = useState(null)
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [sessionState, setSessionState] = useState('idle')
+  const [level, setLevel] = useState(0)
+  const [transcript, setTranscript] = useState([])
+  const session = useRef(null)
+
+  const apply = next => {
+    if (!next) return
+    setValue(next)
+    if (next.config) setDraft({ ...next.config, personaAliases: Array.isArray(next.config.personaAliases) ? [...next.config.personaAliases] : [] })
+  }
+  const load = async () => apply(await actions.mossLive())
+  useEffect(() => {
+    let alive = true
+    load().catch(failure => { if (alive) setError(failure.message) })
+    const timer = window.setInterval(() => { actions.mossLive().then(next => { if (alive) apply(next) }).catch(() => {}) }, 1000)
+    return () => { alive = false; window.clearInterval(timer); void session.current?.stop?.() }
+  }, [])
+  const run = async (task, done = '') => {
+    setBusy(true); setError(''); setMessage('')
+    try { const next = await task(); apply(next); if (done) setMessage(done); return next }
+    catch (failure) { setError(failure.message); return null }
+    finally { setBusy(false) }
+  }
+  const start = async () => {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const next = value?.runtime?.state === 'ready' ? value : await actions.mossLiveStart()
+      apply(next)
+      if (!next?.runtime?.port || !next?.runtime?.token) throw new Error('MOSS Live relay is not ready')
+      const current = new MossLiveSession({
+        port: next.runtime.port,
+        token: next.runtime.token,
+        config: next.config,
+        onState: setSessionState,
+        onLevel: setLevel,
+        onTranscript: item => setTranscript(items => [...items.slice(-19), item]),
+        onEvent: event => { if (event.type === 'error') setError(event.data?.error?.message ?? 'MOSS Live returned an error') },
+      })
+      session.current = current
+      await current.connect()
+      await current.startMic()
+      setMessage('MOSS Live 已开始')
+    } catch (failure) { setError(failure.message); setSessionState('error') }
+    finally { setBusy(false) }
+  }
+  const stop = async () => {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      await session.current?.stop?.()
+      session.current = null
+      const next = await actions.mossLiveStop()
+      apply(next)
+      setSessionState('idle'); setLevel(0); setMessage('MOSS Live 已停止')
+    } catch (failure) { setError(failure.message) }
+    finally { setBusy(false) }
+  }
+  if (draft === null) return h('section', { className: 'bt-moss-live', 'aria-label': 'MOSS Live' }, h('p', { role: error ? 'alert' : 'status' }, error || t('Loading…')))
+  const runtime = value?.runtime ?? { state: 'stopped' }
+  const input = (key, label, multiline = false) => h('label', { className: 'bt-phone-field', key }, h('span', null, label), multiline
+    ? h('textarea', { className: 'bt-input bt-moss-textarea', 'data-moss-live-field': key, value: draft[key] ?? '', onInput: event => setDraft(current => ({ ...current, [key]: event.target.value })) })
+    : h('input', { className: 'bt-input', 'data-moss-live-field': key, value: draft[key] ?? '', onInput: event => setDraft(current => ({ ...current, [key]: event.target.value })) }))
+  const active = sessionState !== 'idle' && sessionState !== 'closed' && sessionState !== 'stopped' && sessionState !== 'error'
+  return h('section', { className: 'bt-moss-live', 'aria-label': 'MOSS Live', 'aria-busy': busy },
+    h('div', { className: 'bt-preset-heading' }, h('div', null, h('h2', null, 'MOSS Live'), h('p', null, '独立全双工实时语音会话，不进入 DS Bot Bot 工具链。')),
+      active ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: stop }, '停止 MOSS Live') : h('button', { type: 'button', className: 'bt-soft', disabled: busy || !value?.apiKeyConfigured, onClick: start }, '开始 MOSS Live')),
+    h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, `运行状态：${runtime.state}`), h('p', null, `会话状态：${sessionState} · 麦克风音量：${Math.round(level * 100)}%`), value?.apiKeyConfigured ? h('p', null, 'API Key：已配置') : h('p', null, 'API Key：未配置')),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '模型配置'),
+      input('model', '模型 ID'), input('personaName', 'Persona 名称'), input('personaPrompt', 'Persona 提示词', true), input('instructions', '会话指令', true),
+      h('label', { className: 'bt-phone-field' }, h('span', null, 'Persona 别名（逗号分隔）'), h('input', { className: 'bt-input', 'data-moss-live-field': 'personaAliases', value: (draft.personaAliases ?? []).join(', '), onInput: event => setDraft(current => ({ ...current, personaAliases: event.target.value.split(',').map(item => item.trim()).filter(Boolean) })) })),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: () => run(() => actions.mossLiveUpdate({ config: draft }), '配置已保存') }, '保存配置')),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, 'MOSS API Key'),
+      h('p', { className: 'bt-note' }, '密钥只保存到 DS Bot Secret Store，不会显示在状态或会话页面。'),
+      h('label', { className: 'bt-phone-field' }, h('span', null, 'API Key'), h('input', { className: 'bt-input', type: 'password', autoComplete: 'off', 'data-moss-live-field': 'apiKey', value: apiKey, onInput: event => setApiKey(event.target.value) })),
+      h('button', { type: 'button', className: 'bt-soft', disabled: busy || !apiKey.trim(), onClick: () => run(() => actions.mossLiveSetKey({ value: apiKey }), 'API Key 已保存') }, '保存 API Key')),
+    h('section', { className: 'bt-phone-card' }, h('h3', null, '实时字幕'),
+      transcript.length ? h('div', { className: 'bt-moss-transcript', role: 'log' }, transcript.map((item, index) => h('p', { key: `${index}-${item.kind}-${item.text.slice(0, 12)}`, 'data-kind': item.kind }, `${item.kind === 'user' ? '你' : 'MOSS'}：${item.text}`))) : h('p', { className: 'bt-note' }, '开始会话后，实时字幕会显示在这里。'),
+      error ? h('p', { className: 'bt-error', role: 'alert' }, hostText(error)) : null,
+      message ? h('p', { role: 'status' }, message) : null))
+}
+
 export function voiceTestSummary(metrics = {}) {
   const frames = Number(metrics.microphoneFrames ?? 0)
   if (!frames) return '还没有收到麦克风音频。'
@@ -385,4 +473,5 @@ export const PLUGIN_CSS = `
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
 .bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-tabs{display:flex;gap:8px;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--bt-line)}.bt-phone-tab-active{font-weight:600;border-color:var(--bt-ink-2)}.bt-phone-test-center{display:block}.bt-phone-test-state{margin:10px 0 0;color:var(--bt-ink-2)}.bt-phone-asr-result{min-height:76px;white-space:pre-wrap;overflow-wrap:anywhere;font:15px var(--bt-font);margin:12px 0;padding:12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-textarea{min-height:72px;resize:vertical}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+ .bt-moss-live{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-moss-live h2{font-size:18px;margin:0 0 6px}.bt-moss-live h3{font-size:14px;margin:0 0 12px}.bt-moss-live p{line-height:1.6}.bt-moss-live .bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-moss-textarea{min-height:88px;resize:vertical}.bt-moss-transcript{max-height:280px;overflow:auto;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-moss-transcript p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}.bt-moss-transcript p[data-kind=assistant]{color:var(--bt-ink-2)}
 `

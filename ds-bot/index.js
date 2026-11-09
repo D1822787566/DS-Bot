@@ -19,6 +19,7 @@ import * as agents from './src/host/agents.js'
 import * as prompt from './src/host/prompt.js'
 import * as plugins from './src/host/plugins.js'
 import * as phoneAgent from './src/host/phone-agent.js'
+import * as mossLive from './src/host/moss-live.js'
 import * as timeContext from './src/host/time-context.js'
 import * as tools from './src/host/tools.js'
 import * as chatIndex from './src/host/chat-index.js'
@@ -56,7 +57,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them. privacy checks a
 // call before the hooks of tools do, so a closed call never reaches a card they show.
-const MODULES = [diagnostics, store, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, plugins, phoneAgent, tools, chatIndex, groups, goals, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, officeSkills, goalSkills]
+const MODULES = [diagnostics, store, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privacy, agents, prompt, timeContext, plugins, phoneAgent, mossLive, tools, chatIndex, groups, goals, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, officeSkills, goalSkills]
 
 export function apply(ctx, config = {}) {
   createRuntime(ctx, config)

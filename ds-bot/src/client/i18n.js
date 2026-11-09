@@ -7,6 +7,7 @@ export const NAMESPACE = 'ds-bot'
 const ZH = {
   'Bot presets': 'Bot 预设',
   'Phone Agent': 'Phone Agent',
+  'MOSS Live': 'MOSS Live',
   'Windows voice runtime for Bot wake words and speech.': '为 Bot 唤醒词和语音提供 Windows 语音运行时。',
   'Runtime: {state}': '运行状态：{state}',
   'Active Bot: {bot}': '当前 Bot：{bot}',

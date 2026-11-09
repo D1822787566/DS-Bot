@@ -55,6 +55,7 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: Phone Agent runtime defaults',
     'on session/event',
     'effect ds-bot: managed voice runtime',
+    'effect ds-bot: MOSS Live relay',
     'on tools/execute',
     'effect ds-bot: scoped team tools',
     'tools guard',
@@ -127,6 +128,7 @@ test('the client channel answers from the saved state', async (t) => {
   // A team saved before the whale was stored gets it on its first Main Bot when loaded.
   // A team saved with labs keeps the model each Bot last ran on and loses the lab.
   const loaded = (await call('state')).value
+  assert.equal((await call('moss-live')).value.config.model, 'moss-live-1.0')
   const [chief, writer] = ['m1', 'b2'].map(id => loaded.bots.find(bot => bot.id === id))
   assert.deepEqual(loaded.mainBotIds, ['m1'])
   assert.deepEqual([chief.model, chief.color, chief.avatar?.shape], ['ollama/deepseek-v4.1-flash', 'deepseek', 'whale'])

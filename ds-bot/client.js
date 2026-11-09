@@ -44,6 +44,7 @@ var NAMESPACE = "ds-bot";
 var ZH = {
   "Bot presets": "Bot 预设",
   "Phone Agent": "Phone Agent",
+  "MOSS Live": "MOSS Live",
   "Windows voice runtime for Bot wake words and speech.": "为 Bot 唤醒词和语音提供 Windows 语音运行时。",
   "Runtime: {state}": "运行状态：{state}",
   "Active Bot: {bot}": "当前 Bot：{bot}",
@@ -15136,6 +15137,357 @@ function createPayload({ name, look, image, model, effort, brief, agentPreset, p
   return payload;
 }
 
+// src/client/moss-live.js
+var SAMPLE_RATE = 48e3;
+var TARGET_RATE = 16e3;
+var FRAME_SAMPLES = 320;
+function buildMossSessionUrl({ port, token }) {
+  return `ws://127.0.0.1:${Number(port)}/?token=${encodeURIComponent(String(token ?? ""))}`;
+}
+function mossSessionUpdatePayload(config = {}) {
+  const persona = {
+    name: String(config.personaName ?? "").trim(),
+    ...Array.isArray(config.personaAliases) && config.personaAliases.length ? { aliases: config.personaAliases } : {},
+    ...String(config.personaPrompt ?? "").trim() ? { prompt: String(config.personaPrompt).trim() } : {}
+  };
+  return {
+    action: "session.update",
+    session: {
+      persona,
+      ...String(config.instructions ?? "").trim() ? { instructions: String(config.instructions).trim() } : {}
+    }
+  };
+}
+function transcriptEvent(action, data = {}) {
+  if (action === "input.transcript.updated" || action === "input.transcript.done") return { kind: "user", done: action.endsWith(".done"), text: String(data.text ?? "") };
+  if (action === "output.transcript.updated" || action === "output.transcript.done") return { kind: "assistant", done: action.endsWith(".done"), text: String(data.text ?? "") };
+  return { kind: void 0, done: false, text: "" };
+}
+var WORKLET_SOURCE = `
+class MossCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super()
+    this.source = []
+    this.offset = 0
+    this.ratio = sampleRate / ${TARGET_RATE}
+    this.frame = []
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0]
+    if (!channel || channel.length === 0) return true
+    for (let index = 0; index < channel.length; index += 1) this.source.push(channel[index])
+    while (this.offset + this.ratio < this.source.length) {
+      const at = Math.floor(this.offset)
+      const fraction = this.offset - at
+      const sample = this.source[at] * (1 - fraction) + this.source[at + 1] * fraction
+      this.frame.push(Math.max(-1, Math.min(1, sample)))
+      this.offset += this.ratio
+      if (this.frame.length === ${FRAME_SAMPLES}) {
+        const pcm = new Int16Array(${FRAME_SAMPLES})
+        for (let item = 0; item < pcm.length; item += 1) {
+          const value = this.frame[item]
+          pcm[item] = value < 0 ? Math.round(value * 0x8000) : Math.round(value * 0x7fff)
+        }
+        this.port.postMessage(pcm.buffer, [pcm.buffer])
+        this.frame = []
+      }
+    }
+    const remove = Math.floor(this.offset)
+    if (remove > 0) { this.source.splice(0, remove); this.offset -= remove }
+    return true
+  }
+}
+registerProcessor('moss-capture', MossCaptureProcessor)
+`;
+function levelOf(pcm) {
+  if (!pcm.length) return 0;
+  let sum = 0;
+  for (const sample of pcm) {
+    const value = sample / 32768;
+    sum += value * value;
+  }
+  return Math.min(1, Math.sqrt(sum / pcm.length) * 4);
+}
+var MossMicCapture = class {
+  constructor({ onFrame, onLevel } = {}) {
+    this.onFrame = onFrame ?? (() => {
+    });
+    this.onLevel = onLevel ?? (() => {
+    });
+    this.ctx = null;
+    this.stream = null;
+    this.source = null;
+    this.node = null;
+    this.sink = null;
+    this.url = null;
+    this.enabled = true;
+  }
+  async start() {
+    if (this.node) return;
+    if (!globalThis.navigator?.mediaDevices?.getUserMedia) throw new Error("当前环境不支持麦克风");
+    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (!Context) throw new Error("当前环境不支持实时音频");
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false });
+    this.ctx = new Context({ latencyHint: "interactive" });
+    this.url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "application/javascript" }));
+    await this.ctx.audioWorklet.addModule(this.url);
+    this.node = new AudioWorkletNode(this.ctx, "moss-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    this.node.port.onmessage = (event) => {
+      if (!this.enabled) return;
+      const pcm = new Int16Array(event.data);
+      this.onLevel(levelOf(pcm));
+      this.onFrame(pcm);
+    };
+    this.source = this.ctx.createMediaStreamSource(this.stream);
+    this.sink = this.ctx.createGain();
+    this.sink.gain.value = 0;
+    this.source.connect(this.node);
+    this.node.connect(this.sink);
+    this.sink.connect(this.ctx.destination);
+    if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {
+    });
+  }
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    for (const track of this.stream?.getAudioTracks?.() ?? []) track.enabled = this.enabled;
+    if (!this.enabled) this.onLevel(0);
+  }
+  async stop() {
+    this.enabled = false;
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.disconnect();
+      this.node = null;
+    }
+    this.source?.disconnect?.();
+    this.source = null;
+    this.sink?.disconnect?.();
+    this.sink = null;
+    for (const track of this.stream?.getTracks?.() ?? []) track.stop();
+    this.stream = null;
+    if (this.ctx) await this.ctx.close().catch(() => {
+    });
+    this.ctx = null;
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.url = null;
+    this.onLevel(0);
+  }
+};
+var MossAudioPlayer = class {
+  constructor({ onChunkDone, onDrain, onLevel, contextFactory } = {}) {
+    this.onChunkDone = onChunkDone ?? (() => {
+    });
+    this.onDrain = onDrain ?? (() => {
+    });
+    this.onLevel = onLevel ?? (() => {
+    });
+    this.contextFactory = contextFactory ?? (() => {
+      const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+      if (!Context) throw new Error("当前环境不支持音频播放");
+      return new Context({ latencyHint: "interactive" });
+    });
+    this.ctx = null;
+    this.gain = null;
+    this.analyser = null;
+    this.levelData = null;
+    this.items = /* @__PURE__ */ new Set();
+    this.nextTime = 0;
+  }
+  ensureContext() {
+    if (this.ctx) return this.ctx;
+    this.ctx = this.contextFactory();
+    this.gain = this.ctx.createGain();
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 512;
+    this.levelData = new Uint8Array(this.analyser.frequencyBinCount);
+    this.gain.connect(this.analyser);
+    this.analyser.connect(this.ctx.destination);
+    this.nextTime = this.ctx.currentTime;
+    return this.ctx;
+  }
+  enqueue(buffer, info) {
+    const ctx = this.ensureContext();
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {
+    });
+    const view = new Int16Array(buffer, 0, Math.floor(buffer.byteLength / 2));
+    if (!view.length) return;
+    const audio = ctx.createBuffer(1, view.length, SAMPLE_RATE);
+    const channel = audio.getChannelData(0);
+    for (let index = 0; index < view.length; index += 1) channel[index] = view[index] / 32768;
+    const source = ctx.createBufferSource();
+    source.buffer = audio;
+    source.connect(this.gain);
+    const startAt = Math.max(ctx.currentTime + 0.08, this.nextTime);
+    const item = { source, info, startAt, endAt: startAt + audio.duration, stopped: false };
+    this.items.add(item);
+    this.nextTime = item.endAt;
+    source.onended = () => {
+      if (item.stopped) return;
+      this.items.delete(item);
+      this.onChunkDone(item);
+      if (this.items.size === 0) this.onDrain();
+    };
+    source.start(startAt);
+  }
+  stop() {
+    const now = this.ctx?.currentTime ?? 0;
+    let playedMs = 0;
+    let info = null;
+    for (const item of this.items) {
+      item.stopped = true;
+      info ||= item.info;
+      if (now >= item.startAt && now <= item.endAt) {
+        playedMs = Math.max(0, (now - item.startAt) * 1e3);
+        info = item.info ?? info;
+      }
+      try {
+        item.source.stop();
+      } catch {
+      }
+    }
+    this.items.clear();
+    if (this.ctx) this.nextTime = now;
+    return { playedMs, info };
+  }
+  level() {
+    if (!this.analyser || !this.levelData) return 0;
+    this.analyser.getByteTimeDomainData(this.levelData);
+    let sum = 0;
+    for (const value of this.levelData) {
+      const sample = (value - 128) / 128;
+      sum += sample * sample;
+    }
+    return Math.min(1, Math.sqrt(sum / this.levelData.length) * 4);
+  }
+  async close() {
+    this.stop();
+    if (this.ctx) await this.ctx.close().catch(() => {
+    });
+    this.ctx = null;
+    this.gain = null;
+    this.analyser = null;
+    this.levelData = null;
+  }
+};
+var MossLiveSession = class {
+  constructor({ port, token, config, onState, onTranscript, onEvent, onLevel } = {}) {
+    this.port = port;
+    this.token = token;
+    this.config = config ?? {};
+    this.onState = onState ?? (() => {
+    });
+    this.onTranscript = onTranscript ?? (() => {
+    });
+    this.onEvent = onEvent ?? (() => {
+    });
+    this.onLevel = onLevel ?? (() => {
+    });
+    this.ws = null;
+    this.mic = null;
+    this.player = new MossAudioPlayer({
+      onChunkDone: (item) => this.playbackChunkDone(item),
+      onDrain: () => this.onEvent({ type: "ui.playback_idle" }),
+      onLevel: (level) => this.onLevel(level)
+    });
+    this.pendingInfo = null;
+    this.state = "idle";
+  }
+  setState(state) {
+    this.state = state;
+    this.onState(state);
+  }
+  send(value) {
+    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(value));
+  }
+  async connect() {
+    if (this.ws) return;
+    const Socket = globalThis.WebSocket;
+    if (!Socket) throw new Error("当前环境不支持 WebSocket");
+    this.setState("connecting");
+    const ws = new Socket(buildMossSessionUrl({ port: this.port, token: this.token }));
+    this.ws = ws;
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => this.send({ action: "attach_session" });
+    ws.onmessage = (event) => typeof event.data === "string" ? this.handleJson(event.data) : this.handleBinary(event.data);
+    ws.onerror = () => this.setState("error");
+    ws.onclose = () => {
+      this.ws = null;
+      if (this.state !== "stopped") this.setState("closed");
+    };
+  }
+  handleJson(raw) {
+    let message;
+    try {
+      message = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const action = message.action;
+    const data = message.data ?? {};
+    this.onEvent({ type: action, data });
+    const transcript = transcriptEvent(action, data);
+    if (transcript.kind) this.onTranscript(transcript);
+    if (action === "session_attached") {
+      this.setState("attached");
+      this.send(mossSessionUpdatePayload(this.config));
+    } else if (action === "session.updated") {
+      if (data.error) {
+        this.setState("error");
+        return;
+      }
+      this.send({ action: "media.mode", binary_protocol: "tagged-v1" });
+      this.setState("ready");
+    } else if (action === "input.speech.started") this.setState("listening");
+    else if (action === "input.speech.stopped") this.setState("thinking");
+    else if (action === "response.audio.started") this.setState("speaking");
+    else if (action === "response.audio.context") this.pendingInfo = { chunkId: data.chunk_id, runId: data.run_id, turnId: data.turn_id };
+    else if (action === "response.audio.stop") {
+      const stopped = this.player.stop();
+      const info = stopped.info;
+      this.send({ action: "playback.stopped", run_id: data.run_id ?? info?.runId, turn_id: data.turn_id ?? info?.turnId, played_audio_ms: Math.round(stopped.playedMs) });
+      this.setState("listening");
+    } else if (action === "response.ended") this.setState("ready");
+    else if (action === "error" && !data.local) this.setState("error");
+  }
+  handleBinary(buffer) {
+    const info = this.pendingInfo;
+    this.pendingInfo = null;
+    this.player.enqueue(buffer, info);
+  }
+  playbackChunkDone(item) {
+    if (!item.info) return;
+    const info = item.info;
+    this.send({ action: "playback.chunk.completed", chunk_id: info.chunkId, run_id: info.runId, turn_id: info.turnId });
+  }
+  async startMic() {
+    if (!this.ws) await this.connect();
+    if (this.mic) return;
+    this.mic = new MossMicCapture({ onFrame: (pcm) => {
+      const bytes = new Uint8Array(1 + pcm.byteLength);
+      bytes[0] = 0;
+      bytes.set(new Uint8Array(pcm.buffer), 1);
+      if (this.ws?.readyState === 1) this.ws.send(bytes);
+    }, onLevel: (level) => this.onLevel(level) });
+    await this.mic.start();
+    this.send({ action: "mic_state", enabled: true });
+  }
+  setMicEnabled(enabled) {
+    this.mic?.setEnabled(enabled);
+    this.send({ action: "mic_state", enabled: Boolean(enabled) });
+  }
+  async stop() {
+    this.setState("stopped");
+    await this.mic?.stop?.();
+    this.mic = null;
+    await this.player.close();
+    try {
+      this.ws?.close(1e3, "stopped");
+    } catch {
+    }
+    this.ws = null;
+  }
+};
+
 // src/client/plugin-page.js
 var import_react34 = require("react");
 var LABELS = { unchecked: "Not checked", checking: "Checking compatibility", ready: "Ready for Bot", partial: "Partially compatible", single: "Single chat only", unverified: "Needs verification", incompatible: "Not compatible", failed: "Check failed", outdated: "Check outdated" };
@@ -15757,6 +16109,147 @@ function PhoneAgentSettings({ actions }) {
     )
   );
 }
+function MossLiveSettings({ actions }) {
+  const [value, setValue] = (0, import_react34.useState)(null);
+  const [draft, setDraft] = (0, import_react34.useState)(null);
+  const [apiKey, setApiKey] = (0, import_react34.useState)("");
+  const [busy, setBusy] = (0, import_react34.useState)(false);
+  const [error, setError] = (0, import_react34.useState)("");
+  const [message, setMessage] = (0, import_react34.useState)("");
+  const [sessionState, setSessionState] = (0, import_react34.useState)("idle");
+  const [level, setLevel] = (0, import_react34.useState)(0);
+  const [transcript, setTranscript] = (0, import_react34.useState)([]);
+  const session = (0, import_react34.useRef)(null);
+  const apply2 = (next) => {
+    if (!next) return;
+    setValue(next);
+    if (next.config) setDraft({ ...next.config, personaAliases: Array.isArray(next.config.personaAliases) ? [...next.config.personaAliases] : [] });
+  };
+  const load = async () => apply2(await actions.mossLive());
+  (0, import_react34.useEffect)(() => {
+    let alive = true;
+    load().catch((failure) => {
+      if (alive) setError(failure.message);
+    });
+    const timer = window.setInterval(() => {
+      actions.mossLive().then((next) => {
+        if (alive) apply2(next);
+      }).catch(() => {
+      });
+    }, 1e3);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      void session.current?.stop?.();
+    };
+  }, []);
+  const run2 = async (task, done = "") => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await task();
+      apply2(next);
+      if (done) setMessage(done);
+      return next;
+    } catch (failure) {
+      setError(failure.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const start = async () => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = value?.runtime?.state === "ready" ? value : await actions.mossLiveStart();
+      apply2(next);
+      if (!next?.runtime?.port || !next?.runtime?.token) throw new Error("MOSS Live relay is not ready");
+      const current = new MossLiveSession({
+        port: next.runtime.port,
+        token: next.runtime.token,
+        config: next.config,
+        onState: setSessionState,
+        onLevel: setLevel,
+        onTranscript: (item) => setTranscript((items) => [...items.slice(-19), item]),
+        onEvent: (event) => {
+          if (event.type === "error") setError(event.data?.error?.message ?? "MOSS Live returned an error");
+        }
+      });
+      session.current = current;
+      await current.connect();
+      await current.startMic();
+      setMessage("MOSS Live 已开始");
+    } catch (failure) {
+      setError(failure.message);
+      setSessionState("error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await session.current?.stop?.();
+      session.current = null;
+      const next = await actions.mossLiveStop();
+      apply2(next);
+      setSessionState("idle");
+      setLevel(0);
+      setMessage("MOSS Live 已停止");
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-moss-live", "aria-label": "MOSS Live" }, (0, import_react34.createElement)("p", { role: error ? "alert" : "status" }, error || t("Loading…")));
+  const runtime = value?.runtime ?? { state: "stopped" };
+  const input = (key, label, multiline = false) => (0, import_react34.createElement)("label", { className: "bt-phone-field", key }, (0, import_react34.createElement)("span", null, label), multiline ? (0, import_react34.createElement)("textarea", { className: "bt-input bt-moss-textarea", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => setDraft((current) => ({ ...current, [key]: event.target.value })) }) : (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => setDraft((current) => ({ ...current, [key]: event.target.value })) }));
+  const active = sessionState !== "idle" && sessionState !== "closed" && sessionState !== "stopped" && sessionState !== "error";
+  return (0, import_react34.createElement)(
+    "section",
+    { className: "bt-moss-live", "aria-label": "MOSS Live", "aria-busy": busy },
+    (0, import_react34.createElement)(
+      "div",
+      { className: "bt-preset-heading" },
+      (0, import_react34.createElement)("div", null, (0, import_react34.createElement)("h2", null, "MOSS Live"), (0, import_react34.createElement)("p", null, "独立全双工实时语音会话，不进入 DS Bot Bot 工具链。")),
+      active ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: stop }, "停止 MOSS Live") : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy || !value?.apiKeyConfigured, onClick: start }, "开始 MOSS Live")
+    ),
+    (0, import_react34.createElement)("div", { className: "bt-plugin-report", role: "status" }, (0, import_react34.createElement)("strong", null, `运行状态：${runtime.state}`), (0, import_react34.createElement)("p", null, `会话状态：${sessionState} · 麦克风音量：${Math.round(level * 100)}%`), value?.apiKeyConfigured ? (0, import_react34.createElement)("p", null, "API Key：已配置") : (0, import_react34.createElement)("p", null, "API Key：未配置")),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, "模型配置"),
+      input("model", "模型 ID"),
+      input("personaName", "Persona 名称"),
+      input("personaPrompt", "Persona 提示词", true),
+      input("instructions", "会话指令", true),
+      (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, "Persona 别名（逗号分隔）"), (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": "personaAliases", value: (draft.personaAliases ?? []).join(", "), onInput: (event) => setDraft((current) => ({ ...current, personaAliases: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })) })),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.mossLiveUpdate({ config: draft }), "配置已保存") }, "保存配置")
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, "MOSS API Key"),
+      (0, import_react34.createElement)("p", { className: "bt-note" }, "密钥只保存到 DS Bot Secret Store，不会显示在状态或会话页面。"),
+      (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, "API Key"), (0, import_react34.createElement)("input", { className: "bt-input", type: "password", autoComplete: "off", "data-moss-live-field": "apiKey", value: apiKey, onInput: (event) => setApiKey(event.target.value) })),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy || !apiKey.trim(), onClick: () => run2(() => actions.mossLiveSetKey({ value: apiKey }), "API Key 已保存") }, "保存 API Key")
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, "实时字幕"),
+      transcript.length ? (0, import_react34.createElement)("div", { className: "bt-moss-transcript", role: "log" }, transcript.map((item, index) => (0, import_react34.createElement)("p", { key: `${index}-${item.kind}-${item.text.slice(0, 12)}`, "data-kind": item.kind }, `${item.kind === "user" ? "你" : "MOSS"}：${item.text}`))) : (0, import_react34.createElement)("p", { className: "bt-note" }, "开始会话后，实时字幕会显示在这里。"),
+      error ? (0, import_react34.createElement)("p", { className: "bt-error", role: "alert" }, hostText(error)) : null,
+      message ? (0, import_react34.createElement)("p", { role: "status" }, message) : null
+    )
+  );
+}
 function voiceTestSummary(metrics = {}) {
   const frames = Number(metrics.microphoneFrames ?? 0);
   if (!frames) return "还没有收到麦克风音频。";
@@ -15805,6 +16298,7 @@ var PLUGIN_CSS = `
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
 .bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-tabs{display:flex;gap:8px;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--bt-line)}.bt-phone-tab-active{font-weight:600;border-color:var(--bt-ink-2)}.bt-phone-test-center{display:block}.bt-phone-test-state{margin:10px 0 0;color:var(--bt-ink-2)}.bt-phone-asr-result{min-height:76px;white-space:pre-wrap;overflow-wrap:anywhere;font:15px var(--bt-font);margin:12px 0;padding:12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-textarea{min-height:72px;resize:vertical}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
+ .bt-moss-live{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-moss-live h2{font-size:18px;margin:0 0 6px}.bt-moss-live h3{font-size:14px;margin:0 0 12px}.bt-moss-live p{line-height:1.6}.bt-moss-live .bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-moss-textarea{min-height:88px;resize:vertical}.bt-moss-transcript{max-height:280px;overflow:auto;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-moss-transcript p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}.bt-moss-transcript p[data-kind=assistant]{color:var(--bt-ink-2)}
 `;
 
 // src/client/create-bot.js
@@ -23274,6 +23768,12 @@ function apply(ctx) {
   actions.phoneAgentVoiceprintLabel = (segmentId) => call("phone-agent-voiceprint-label", { segmentId });
   actions.phoneAgentVoiceprintApply = () => call("phone-agent-voiceprint-apply");
   actions.phoneAgentVoiceprintDiscard = () => call("phone-agent-voiceprint-discard");
+  actions.mossLive = () => call("moss-live");
+  actions.mossLiveUpdate = (body) => call("moss-live-update", body);
+  actions.mossLiveSetKey = (body) => call("moss-live-set-key", body);
+  actions.mossLiveClearKey = () => call("moss-live-clear-key");
+  actions.mossLiveStart = () => call("moss-live-start");
+  actions.mossLiveStop = () => call("moss-live-stop");
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);
@@ -23500,15 +24000,19 @@ function apply(ctx) {
   const installBotPresets = () => {
     let dispose = null;
     let disposePhone = null;
+    let disposeMoss = null;
     const sync = () => {
       if (roster.getSnapshot().pluginsEnabled !== false && !dispose) {
         dispose = shadow("plugins.tab", { id: "ds-bot-presets", order: 100, label: () => t("Bot presets"), inject: () => ({ actions }) }, BotPresets);
         disposePhone = shadow("plugins.tab", { id: "ds-bot-phone-agent", order: 110, label: () => t("Phone Agent"), inject: () => ({ actions }) }, PhoneAgentSettings);
+        disposeMoss = shadow("plugins.tab", { id: "ds-bot-moss-live", order: 120, label: () => t("MOSS Live"), inject: () => ({ actions }) }, MossLiveSettings);
       } else if (roster.getSnapshot().pluginsEnabled === false && dispose) {
         dispose();
         dispose = null;
         disposePhone?.();
         disposePhone = null;
+        disposeMoss?.();
+        disposeMoss = null;
       }
     };
     const off = roster.subscribe(sync);
@@ -23517,6 +24021,7 @@ function apply(ctx) {
       off();
       dispose?.();
       disposePhone?.();
+      disposeMoss?.();
     };
   };
   const installShell = () => [

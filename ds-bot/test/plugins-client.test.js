@@ -17,7 +17,7 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
-const { BotPresets, PresetPicker, PhoneAgentSettings, openPluginManager, voiceTestSummary } = module.exports
+const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, openPluginManager, voiceTestSummary } = module.exports
 
 async function mount(t, component, props) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
@@ -84,6 +84,34 @@ test('Phone Agent settings edits Bot wake names and voices through the host acti
   assert.equal(calls.at(-1).botId, 'a')
   assert.equal(calls.at(-1).profile.wakeName, 'new-alpha')
   assert.equal(calls.at(-1).profile.ttsVoice, 'voice-a')
+})
+
+test('MOSS Live settings edits the persona through the host action', async t => {
+  const calls = []
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { enabled: false, model: 'moss-live-1.0', personaName: 'DS Bot', personaAliases: [], personaPrompt: '', instructions: '', maxSessionSeconds: 1800 }, apiKeyConfigured: false, runtime: { state: 'stopped' } }),
+    mossLiveUpdate: async value => { calls.push(value); return undefined },
+  } })
+  assert.match(document.body.textContent, /MOSS Live/)
+  const name = document.querySelector('[data-moss-live-field="personaName"]')
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(name, 'Luna')
+  await act(async () => name.dispatchEvent(new window.Event('input', { bubbles: true })))
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '保存配置').click())
+  assert.equal(calls.at(-1).config.personaName, 'Luna')
+})
+
+test('MOSS Live settings saves the API key through a host secret action', async t => {
+  const calls = []
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { enabled: false, model: 'moss-live-1.0', personaName: 'DS Bot', personaAliases: [], personaPrompt: '', instructions: '', maxSessionSeconds: 1800 }, apiKeyConfigured: false, runtime: { state: 'stopped' } }),
+    mossLiveSetKey: async body => { calls.push(body); return undefined },
+  } })
+  const key = document.querySelector('[data-moss-live-field="apiKey"]')
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(key, 'secret-value')
+  await act(async () => key.dispatchEvent(new window.Event('input', { bubbles: true })))
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '保存 API Key').click())
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].value, 'secret-value')
 })
 
 test('Phone Agent settings exposes a self-test and runtime diagnostics', async t => {
