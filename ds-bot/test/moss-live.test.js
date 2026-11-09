@@ -109,6 +109,21 @@ test('MOSS Live host module exposes config and key actions without returning the
   assert.deepEqual(calls, ['save', ['secret-set', 'MOSS_API_KEY', 'new-secret']])
 })
 
+test('MOSS Live start restores defaults after a saved state reload has no MOSS config', async () => {
+  const rt = {
+    state: { prefs: {} },
+    ctx: { effect() {} },
+    save: async () => {},
+    secretValue: () => '',
+  }
+  install(rt)
+  delete rt.state.prefs.mossLive
+  const view = await rt.mossLiveStart()
+  assert.equal(view.config.model, 'moss-live-1.0')
+  assert.equal(view.runtime.state, 'error')
+  assert.match(view.runtime.error, /API Key/)
+})
+
 test('MOSS Live relay authenticates the local client and forwards only cleaned events', async () => {
   class FakeUpstream extends EventEmitter {
     static last = null

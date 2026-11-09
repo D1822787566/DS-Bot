@@ -376,14 +376,19 @@ export class MossLiveManager {
 
 export function install(rt) {
   const { state } = rt
-  state.prefs ??= {}
-  state.prefs.mossLive = normalizeMossLiveConfig(state.prefs.mossLive ?? {})
+  const ensureConfig = () => {
+    state.prefs ??= {}
+    state.prefs.mossLive = normalizeMossLiveConfig(state.prefs.mossLive ?? {})
+    return state.prefs.mossLive
+  }
+  ensureConfig()
   const manager = new MossLiveManager(rt)
-  const view = () => mossLiveView(state, { ...manager.view(), apiKeyConfigured: Boolean(rt.secretValue?.(MOSS_LIVE_SECRET_NAME)) })
+  const view = () => { ensureConfig(); return mossLiveView(state, { ...manager.view(), apiKeyConfigured: Boolean(rt.secretValue?.(MOSS_LIVE_SECRET_NAME)) }) }
   const save = async () => { await rt.save(); return view() }
   const mossLive = () => view()
   const mossLiveUpdate = async body => {
-    if (body?.config !== undefined) state.prefs.mossLive = normalizeMossLiveConfig({ ...state.prefs.mossLive, ...body.config })
+    const config = ensureConfig()
+    if (body?.config !== undefined) state.prefs.mossLive = normalizeMossLiveConfig({ ...config, ...body.config })
     if (manager.state !== 'stopped') await manager.stop()
     return save()
   }
@@ -398,13 +403,14 @@ export function install(rt) {
     return view()
   }
   const mossLiveStart = async () => {
-    state.prefs.mossLive.enabled = true
+    const config = ensureConfig()
+    config.enabled = true
     await rt.save()
-    await manager.start(state.prefs.mossLive)
+    await manager.start(config)
     return view()
   }
   const mossLiveStop = async () => {
-    state.prefs.mossLive.enabled = false
+    ensureConfig().enabled = false
     await manager.stop()
     return save()
   }
