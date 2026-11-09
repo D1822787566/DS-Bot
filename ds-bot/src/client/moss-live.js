@@ -22,9 +22,76 @@ export function mossSessionUpdatePayload(config = {}) {
 }
 
 export function transcriptEvent(action, data = {}) {
-  if (action === 'input.transcript.updated' || action === 'input.transcript.done') return { kind: 'user', done: action.endsWith('.done'), text: String(data.text ?? '') }
-  if (action === 'output.transcript.updated' || action === 'output.transcript.done') return { kind: 'assistant', done: action.endsWith('.done'), text: String(data.text ?? '') }
+  if (action === 'input.transcript.updated' || action === 'input.transcript.done') return {
+    kind: 'user', done: action.endsWith('.done'), text: String(data.text ?? ''),
+    ...(data.turn === undefined ? {} : { id: `turn:${String(data.turn)}` }),
+  }
+  if (action === 'output.transcript.updated' || action === 'output.transcript.done') return {
+    kind: 'assistant', done: action.endsWith('.done'), text: String(data.text ?? ''),
+    ...(data.run_id === undefined ? {} : { id: `run:${String(data.run_id)}` }),
+  }
+  if (action === 'response.interrupted') return {
+    kind: 'assistant', done: true, interrupted: true, text: String(data.text ?? ''),
+    ...(data.run_id === undefined ? {} : { id: `run:${String(data.run_id)}` }),
+  }
   return { kind: undefined, done: false, text: '' }
+}
+
+export function mergeTranscriptEvent(items = [], next) {
+  if (!next?.kind || !String(next.text ?? '').trim()) return items
+  const value = { ...next, text: String(next.text), at: next.at ?? new Date().toISOString() }
+  let index = -1
+  if (value.id) index = items.findLastIndex?.(item => item.id === value.id) ?? [...items].map(item => item.id).lastIndexOf(value.id)
+  if (index < 0 && !value.id) {
+    for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+      if (items[cursor].kind === value.kind && items[cursor].done !== true) { index = cursor; break }
+      if (items[cursor].kind !== value.kind) break
+    }
+  }
+  if (index >= 0 && items[index].done === true && value.done !== true) return items
+  if (index < 0) return [...items, value]
+  if (items[index].done === true && value.interrupted !== true && next.done === true) return items
+  const updated = items.slice()
+  updated[index] = { ...value, at: items[index].at ?? value.at }
+  return updated
+}
+
+export function transcriptMarkdown(items = [], { personaName = 'MOSS', startedAt = '', endedAt = '' } = {}) {
+  const lines = ['# MOSS Live 通话记录', '', `- Persona：${String(personaName || 'MOSS')}`]
+  if (startedAt) lines.push(`- 开始时间：${startedAt}`)
+  if (endedAt) lines.push(`- 结束时间：${endedAt}`)
+  lines.push('', '---', '')
+  for (const item of items) {
+    const text = String(item?.text ?? '').trim()
+    if (!text) continue
+    const who = item.kind === 'user' ? '你' : 'MOSS'
+    const at = item.at ? `[${item.at}] ` : ''
+    lines.push(`${at}${who}：${text}${item.interrupted ? '（本轮被打断）' : ''}`, '')
+  }
+  return `${lines.join('\n').trimEnd()}\n`
+}
+
+export function speakMossGreeting(text, { speechSynthesis = globalThis.speechSynthesis, SpeechSynthesisUtterance = globalThis.SpeechSynthesisUtterance, signal } = {}) {
+  const value = String(text ?? '').trim()
+  if (!value || !speechSynthesis || typeof SpeechSynthesisUtterance !== 'function' || typeof speechSynthesis.speak !== 'function') return Promise.resolve(false)
+  if (signal?.aborted) return Promise.resolve(false)
+  try { speechSynthesis.cancel?.() } catch { /* ignore */ }
+  return new Promise(resolve => {
+    let settled = false
+    let timer = null
+    const abort = () => { try { speechSynthesis.cancel?.() } catch { /* ignore */ }; finish(false) }
+    const finish = value => { if (settled) return; settled = true; if (timer !== null) globalThis.clearTimeout?.(timer); resolve(value) }
+    let utterance
+    try { utterance = new SpeechSynthesisUtterance(value) } catch { finish(false); return }
+    utterance.lang = 'zh-CN'
+    utterance.rate = 1.04
+    utterance.pitch = 1
+    utterance.onend = () => finish(true)
+    utterance.onerror = () => finish(false)
+    signal?.addEventListener?.('abort', abort, { once: true })
+    timer = globalThis.setTimeout(() => { try { speechSynthesis.cancel?.() } catch { /* ignore */ }; finish(false) }, 8000)
+    try { speechSynthesis.speak(utterance) } catch { finish(false) }
+  })
 }
 
 const WORKLET_SOURCE = `
@@ -146,6 +213,8 @@ export class MossAudioPlayer {
     this.levelData = null
     this.items = new Set()
     this.nextTime = 0
+    this.levelFrame = null
+    this.levelTimer = null
   }
 
   ensureContext() {
@@ -176,11 +245,16 @@ export class MossAudioPlayer {
     const item = { source, info, startAt, endAt: startAt + audio.duration, stopped: false }
     this.items.add(item)
     this.nextTime = item.endAt
+    this.monitorLevel()
     source.onended = () => {
       if (item.stopped) return
       this.items.delete(item)
       this.onChunkDone(item)
-      if (this.items.size === 0) this.onDrain()
+      if (this.items.size === 0) {
+        this.stopLevelMonitor()
+        this.onLevel(0, 'playback')
+        this.onDrain()
+      }
     }
     source.start(startAt)
   }
@@ -196,6 +270,8 @@ export class MossAudioPlayer {
       try { item.source.stop() } catch { /* already stopped */ }
     }
     this.items.clear()
+    this.stopLevelMonitor()
+    this.onLevel(0, 'playback')
     if (this.ctx) this.nextTime = now
     return { playedMs, info }
   }
@@ -208,8 +284,29 @@ export class MossAudioPlayer {
     return Math.min(1, Math.sqrt(sum / this.levelData.length) * 4)
   }
 
+  monitorLevel() {
+    if (this.levelFrame !== null || this.levelTimer !== null) return
+    const tick = () => {
+      this.levelFrame = null
+      this.levelTimer = null
+      if (!this.items.size) return
+      this.onLevel(this.level(), 'playback')
+      if (typeof globalThis.requestAnimationFrame === 'function') this.levelFrame = globalThis.requestAnimationFrame(tick)
+      else this.levelTimer = globalThis.setTimeout(tick, 50)
+    }
+    tick()
+  }
+
+  stopLevelMonitor() {
+    if (this.levelFrame !== null) globalThis.cancelAnimationFrame?.(this.levelFrame)
+    if (this.levelTimer !== null) globalThis.clearTimeout?.(this.levelTimer)
+    this.levelFrame = null
+    this.levelTimer = null
+  }
+
   async close() {
     this.stop()
+    this.stopLevelMonitor()
     if (this.ctx) await this.ctx.close().catch(() => {})
     this.ctx = null; this.gain = null; this.analyser = null; this.levelData = null
   }
@@ -228,8 +325,11 @@ export class MossLiveSession {
     this.mic = null
     this.player = new MossAudioPlayer({
       onChunkDone: item => this.playbackChunkDone(item),
-      onDrain: () => this.onEvent({ type: 'ui.playback_idle' }),
-      onLevel: level => this.onLevel(level),
+      onDrain: () => {
+        if (this.state === 'speaking') this.setState('ready')
+        this.onEvent({ type: 'ui.playback_idle' })
+      },
+      onLevel: (level, source) => this.onLevel(level, source),
     })
     this.pendingInfo = null
     this.state = 'idle'
@@ -279,7 +379,10 @@ export class MossLiveSession {
       const info = stopped.info
       this.send({ action: 'playback.stopped', run_id: data.run_id ?? info?.runId, turn_id: data.turn_id ?? info?.turnId, played_audio_ms: Math.round(stopped.playedMs) })
       this.setState('listening')
-    } else if (action === 'response.ended') this.setState('ready')
+    } else if (action === 'response.ended') {
+      if (this.player.items.size === 0) this.setState('ready')
+      else this.setState('speaking')
+    }
     else if (action === 'error' && !data.local) this.setState('error')
   }
 
@@ -303,7 +406,7 @@ export class MossLiveSession {
       bytes[0] = 0
       bytes.set(new Uint8Array(pcm.buffer), 1)
       if (this.ws?.readyState === 1) this.ws.send(bytes)
-    }, onLevel: level => this.onLevel(level) })
+    }, onLevel: level => this.onLevel(level, 'mic') })
     await this.mic.start()
     this.send({ action: 'mic_state', enabled: true })
   }

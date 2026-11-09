@@ -15159,9 +15159,115 @@ function mossSessionUpdatePayload(config = {}) {
   };
 }
 function transcriptEvent(action, data = {}) {
-  if (action === "input.transcript.updated" || action === "input.transcript.done") return { kind: "user", done: action.endsWith(".done"), text: String(data.text ?? "") };
-  if (action === "output.transcript.updated" || action === "output.transcript.done") return { kind: "assistant", done: action.endsWith(".done"), text: String(data.text ?? "") };
+  if (action === "input.transcript.updated" || action === "input.transcript.done") return {
+    kind: "user",
+    done: action.endsWith(".done"),
+    text: String(data.text ?? ""),
+    ...data.turn === void 0 ? {} : { id: `turn:${String(data.turn)}` }
+  };
+  if (action === "output.transcript.updated" || action === "output.transcript.done") return {
+    kind: "assistant",
+    done: action.endsWith(".done"),
+    text: String(data.text ?? ""),
+    ...data.run_id === void 0 ? {} : { id: `run:${String(data.run_id)}` }
+  };
+  if (action === "response.interrupted") return {
+    kind: "assistant",
+    done: true,
+    interrupted: true,
+    text: String(data.text ?? ""),
+    ...data.run_id === void 0 ? {} : { id: `run:${String(data.run_id)}` }
+  };
   return { kind: void 0, done: false, text: "" };
+}
+function mergeTranscriptEvent(items = [], next) {
+  if (!next?.kind || !String(next.text ?? "").trim()) return items;
+  const value = { ...next, text: String(next.text), at: next.at ?? (/* @__PURE__ */ new Date()).toISOString() };
+  let index = -1;
+  if (value.id) index = items.findLastIndex?.((item) => item.id === value.id) ?? [...items].map((item) => item.id).lastIndexOf(value.id);
+  if (index < 0 && !value.id) {
+    for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+      if (items[cursor].kind === value.kind && items[cursor].done !== true) {
+        index = cursor;
+        break;
+      }
+      if (items[cursor].kind !== value.kind) break;
+    }
+  }
+  if (index >= 0 && items[index].done === true && value.done !== true) return items;
+  if (index < 0) return [...items, value];
+  if (items[index].done === true && value.interrupted !== true && next.done === true) return items;
+  const updated = items.slice();
+  updated[index] = { ...value, at: items[index].at ?? value.at };
+  return updated;
+}
+function transcriptMarkdown(items = [], { personaName = "MOSS", startedAt = "", endedAt = "" } = {}) {
+  const lines = ["# MOSS Live 通话记录", "", `- Persona：${String(personaName || "MOSS")}`];
+  if (startedAt) lines.push(`- 开始时间：${startedAt}`);
+  if (endedAt) lines.push(`- 结束时间：${endedAt}`);
+  lines.push("", "---", "");
+  for (const item of items) {
+    const text = String(item?.text ?? "").trim();
+    if (!text) continue;
+    const who = item.kind === "user" ? "你" : "MOSS";
+    const at = item.at ? `[${item.at}] ` : "";
+    lines.push(`${at}${who}：${text}${item.interrupted ? "（本轮被打断）" : ""}`, "");
+  }
+  return `${lines.join("\n").trimEnd()}
+`;
+}
+function speakMossGreeting(text, { speechSynthesis = globalThis.speechSynthesis, SpeechSynthesisUtterance: SpeechSynthesisUtterance2 = globalThis.SpeechSynthesisUtterance, signal } = {}) {
+  const value = String(text ?? "").trim();
+  if (!value || !speechSynthesis || typeof SpeechSynthesisUtterance2 !== "function" || typeof speechSynthesis.speak !== "function") return Promise.resolve(false);
+  if (signal?.aborted) return Promise.resolve(false);
+  try {
+    speechSynthesis.cancel?.();
+  } catch {
+  }
+  return new Promise((resolve2) => {
+    let settled = false;
+    let timer = null;
+    const abort = () => {
+      try {
+        speechSynthesis.cancel?.();
+      } catch {
+      }
+      ;
+      finish(false);
+    };
+    const finish = (value2) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) globalThis.clearTimeout?.(timer);
+      resolve2(value2);
+    };
+    let utterance;
+    try {
+      utterance = new SpeechSynthesisUtterance2(value);
+    } catch {
+      finish(false);
+      return;
+    }
+    utterance.lang = "zh-CN";
+    utterance.rate = 1.04;
+    utterance.pitch = 1;
+    utterance.onend = () => finish(true);
+    utterance.onerror = () => finish(false);
+    signal?.addEventListener?.("abort", abort, { once: true });
+    timer = globalThis.setTimeout(() => {
+      try {
+        speechSynthesis.cancel?.();
+      } catch {
+      }
+      ;
+      finish(false);
+    }, 8e3);
+    try {
+      speechSynthesis.speak(utterance);
+    } catch {
+      finish(false);
+    }
+  });
 }
 var WORKLET_SOURCE = `
 class MossCaptureProcessor extends AudioWorkletProcessor {
@@ -15292,6 +15398,8 @@ var MossAudioPlayer = class {
     this.levelData = null;
     this.items = /* @__PURE__ */ new Set();
     this.nextTime = 0;
+    this.levelFrame = null;
+    this.levelTimer = null;
   }
   ensureContext() {
     if (this.ctx) return this.ctx;
@@ -15321,11 +15429,16 @@ var MossAudioPlayer = class {
     const item = { source, info, startAt, endAt: startAt + audio.duration, stopped: false };
     this.items.add(item);
     this.nextTime = item.endAt;
+    this.monitorLevel();
     source.onended = () => {
       if (item.stopped) return;
       this.items.delete(item);
       this.onChunkDone(item);
-      if (this.items.size === 0) this.onDrain();
+      if (this.items.size === 0) {
+        this.stopLevelMonitor();
+        this.onLevel(0, "playback");
+        this.onDrain();
+      }
     };
     source.start(startAt);
   }
@@ -15346,6 +15459,8 @@ var MossAudioPlayer = class {
       }
     }
     this.items.clear();
+    this.stopLevelMonitor();
+    this.onLevel(0, "playback");
     if (this.ctx) this.nextTime = now;
     return { playedMs, info };
   }
@@ -15359,8 +15474,27 @@ var MossAudioPlayer = class {
     }
     return Math.min(1, Math.sqrt(sum / this.levelData.length) * 4);
   }
+  monitorLevel() {
+    if (this.levelFrame !== null || this.levelTimer !== null) return;
+    const tick = () => {
+      this.levelFrame = null;
+      this.levelTimer = null;
+      if (!this.items.size) return;
+      this.onLevel(this.level(), "playback");
+      if (typeof globalThis.requestAnimationFrame === "function") this.levelFrame = globalThis.requestAnimationFrame(tick);
+      else this.levelTimer = globalThis.setTimeout(tick, 50);
+    };
+    tick();
+  }
+  stopLevelMonitor() {
+    if (this.levelFrame !== null) globalThis.cancelAnimationFrame?.(this.levelFrame);
+    if (this.levelTimer !== null) globalThis.clearTimeout?.(this.levelTimer);
+    this.levelFrame = null;
+    this.levelTimer = null;
+  }
   async close() {
     this.stop();
+    this.stopLevelMonitor();
     if (this.ctx) await this.ctx.close().catch(() => {
     });
     this.ctx = null;
@@ -15386,8 +15520,11 @@ var MossLiveSession = class {
     this.mic = null;
     this.player = new MossAudioPlayer({
       onChunkDone: (item) => this.playbackChunkDone(item),
-      onDrain: () => this.onEvent({ type: "ui.playback_idle" }),
-      onLevel: (level) => this.onLevel(level)
+      onDrain: () => {
+        if (this.state === "speaking") this.setState("ready");
+        this.onEvent({ type: "ui.playback_idle" });
+      },
+      onLevel: (level, source) => this.onLevel(level, source)
     });
     this.pendingInfo = null;
     this.state = "idle";
@@ -15446,8 +15583,10 @@ var MossLiveSession = class {
       const info = stopped.info;
       this.send({ action: "playback.stopped", run_id: data.run_id ?? info?.runId, turn_id: data.turn_id ?? info?.turnId, played_audio_ms: Math.round(stopped.playedMs) });
       this.setState("listening");
-    } else if (action === "response.ended") this.setState("ready");
-    else if (action === "error" && !data.local) this.setState("error");
+    } else if (action === "response.ended") {
+      if (this.player.items.size === 0) this.setState("ready");
+      else this.setState("speaking");
+    } else if (action === "error" && !data.local) this.setState("error");
   }
   handleBinary(buffer) {
     const info = this.pendingInfo;
@@ -15467,7 +15606,7 @@ var MossLiveSession = class {
       bytes[0] = 0;
       bytes.set(new Uint8Array(pcm.buffer), 1);
       if (this.ws?.readyState === 1) this.ws.send(bytes);
-    }, onLevel: (level) => this.onLevel(level) });
+    }, onLevel: (level) => this.onLevel(level, "mic") });
     await this.mic.start();
     this.send({ action: "mic_state", enabled: true });
   }
@@ -16109,6 +16248,28 @@ function PhoneAgentSettings({ actions }) {
     )
   );
 }
+var MOSS_SCENE_PRESETS = [
+  { id: "free", name: "自由对话", instructions: "用自然、简洁的中文口语回答。先说结论，再补充必要信息。" },
+  { id: "interpreter", name: "同声传译", instructions: "把听到的中文翻译成英文，把听到的英文翻译成中文。只输出翻译结果，不解释。" },
+  { id: "visual", name: "视觉助手", instructions: "当用户提供摄像头或屏幕内容时，先描述你看到的重点，再回答问题。无法看清时要明确说明。" },
+  { id: "assistant", name: "实时助理", instructions: "回答适合语音播放，避免 Markdown 和长段落。需要执行步骤时，按顺序说出下一步。" },
+  { id: "custom", name: "自定义", instructions: "" }
+];
+var sceneForInstructions = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return "free";
+  return MOSS_SCENE_PRESETS.find((item) => item.id !== "custom" && item.instructions === text)?.id ?? "custom";
+};
+function downloadMossTranscript(items, config, startedAt, endedAt) {
+  const markdown = transcriptMarkdown(items, { personaName: config?.personaName, startedAt, endedAt });
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `moss-live-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.md`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 function MossLiveSettings({ actions }) {
   const [value, setValue] = (0, import_react34.useState)(null);
   const [draft, setDraft] = (0, import_react34.useState)(null);
@@ -16118,12 +16279,33 @@ function MossLiveSettings({ actions }) {
   const [message, setMessage] = (0, import_react34.useState)("");
   const [sessionState, setSessionState] = (0, import_react34.useState)("idle");
   const [level, setLevel] = (0, import_react34.useState)(0);
+  const [levelSource, setLevelSource] = (0, import_react34.useState)("mic");
   const [transcript, setTranscript] = (0, import_react34.useState)([]);
+  const [scene, setScene] = (0, import_react34.useState)("free");
+  const [startedAt, setStartedAt] = (0, import_react34.useState)("");
+  const [endedAt, setEndedAt] = (0, import_react34.useState)("");
   const session = (0, import_react34.useRef)(null);
+  const greetingAbort = (0, import_react34.useRef)(null);
+  const dirty = (0, import_react34.useRef)(/* @__PURE__ */ new Set());
+  const initialized = (0, import_react34.useRef)(false);
   const apply2 = (next) => {
     if (!next) return;
     setValue(next);
-    if (next.config) setDraft({ ...next.config, personaAliases: Array.isArray(next.config.personaAliases) ? [...next.config.personaAliases] : [] });
+    if (next.config) {
+      const config = { ...next.config, personaAliases: Array.isArray(next.config.personaAliases) ? [...next.config.personaAliases] : [] };
+      if (!initialized.current) {
+        initialized.current = true;
+        setDraft(config);
+        setScene(sceneForInstructions(config.instructions));
+      } else {
+        setDraft((current) => {
+          if (!current) return config;
+          const kept = {};
+          for (const key of dirty.current) kept[key] = current[key];
+          return { ...config, ...kept, personaAliases: dirty.current.has("personaAliases") ? current.personaAliases : config.personaAliases };
+        });
+      }
+    }
   };
   const load = async () => apply2(await actions.mossLive());
   (0, import_react34.useEffect)(() => {
@@ -16140,6 +16322,12 @@ function MossLiveSettings({ actions }) {
     return () => {
       alive = false;
       window.clearInterval(timer);
+      greetingAbort.current?.abort?.();
+      try {
+        window.speechSynthesis?.cancel?.();
+      } catch {
+      }
+      ;
       void session.current?.stop?.();
     };
   }, []);
@@ -16159,6 +16347,11 @@ function MossLiveSettings({ actions }) {
       setBusy(false);
     }
   };
+  const saveConfig = () => run2(async () => {
+    const next = await actions.mossLiveUpdate({ config: draft });
+    dirty.current.clear();
+    return next;
+  }, "配置已保存");
   const start = async () => {
     setBusy(true);
     setError("");
@@ -16167,13 +16360,22 @@ function MossLiveSettings({ actions }) {
       const next = value?.runtime?.state === "ready" ? value : await actions.mossLiveStart();
       apply2(next);
       if (!next?.runtime?.port || !next?.runtime?.token) throw new Error("MOSS Live relay is not ready");
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      setStartedAt(now);
+      setEndedAt("");
+      setTranscript([]);
+      greetingAbort.current?.abort?.();
+      greetingAbort.current = new AbortController();
       const current = new MossLiveSession({
         port: next.runtime.port,
         token: next.runtime.token,
         config: next.config,
         onState: setSessionState,
-        onLevel: setLevel,
-        onTranscript: (item) => setTranscript((items) => [...items.slice(-19), item]),
+        onLevel: (value2, source = "mic") => {
+          setLevel(value2);
+          setLevelSource(source);
+        },
+        onTranscript: (item) => setTranscript((items) => mergeTranscriptEvent(items, { ...item, at: (/* @__PURE__ */ new Date()).toISOString() })),
         onEvent: (event) => {
           if (event.type === "error") setError(event.data?.error?.message ?? "MOSS Live returned an error");
         }
@@ -16181,10 +16383,31 @@ function MossLiveSettings({ actions }) {
       session.current = current;
       await current.connect();
       await current.startMic();
+      if (next.config?.greetingEnabled !== false) {
+        current.setMicEnabled(false);
+        setSessionState("greeting");
+        const greeted = await speakMossGreeting(next.config?.greetingText || `你好，我是 ${next.config?.personaName || "DS Bot"}，现在可以直接和我说话。`, { signal: greetingAbort.current.signal });
+        if (greeted && session.current === current && !greetingAbort.current.signal.aborted) current.setMicEnabled(true);
+      }
       setMessage("MOSS Live 已开始");
     } catch (failure) {
+      greetingAbort.current?.abort?.();
+      try {
+        window.speechSynthesis?.cancel?.();
+      } catch {
+      }
+      try {
+        await session.current?.stop?.();
+      } catch {
+      }
+      session.current = null;
+      try {
+        await actions.mossLiveStop?.();
+      } catch {
+      }
       setError(failure.message);
       setSessionState("error");
+      setEndedAt((/* @__PURE__ */ new Date()).toISOString());
     } finally {
       setBusy(false);
     }
@@ -16194,22 +16417,37 @@ function MossLiveSettings({ actions }) {
     setError("");
     setMessage("");
     try {
+      greetingAbort.current?.abort?.();
       await session.current?.stop?.();
       session.current = null;
       const next = await actions.mossLiveStop();
       apply2(next);
+      try {
+        window.speechSynthesis?.cancel?.();
+      } catch {
+      }
       setSessionState("idle");
       setLevel(0);
+      setEndedAt((/* @__PURE__ */ new Date()).toISOString());
       setMessage("MOSS Live 已停止");
     } catch (failure) {
       setError(failure.message);
+      setEndedAt((/* @__PURE__ */ new Date()).toISOString());
     } finally {
       setBusy(false);
     }
   };
   if (draft === null) return (0, import_react34.createElement)("section", { className: "bt-moss-live", "aria-label": "MOSS Live" }, (0, import_react34.createElement)("p", { role: error ? "alert" : "status" }, error || t("Loading…")));
   const runtime = value?.runtime ?? { state: "stopped" };
-  const input = (key, label, multiline = false) => (0, import_react34.createElement)("label", { className: "bt-phone-field", key }, (0, import_react34.createElement)("span", null, label), multiline ? (0, import_react34.createElement)("textarea", { className: "bt-input bt-moss-textarea", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => setDraft((current) => ({ ...current, [key]: event.target.value })) }) : (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => setDraft((current) => ({ ...current, [key]: event.target.value })) }));
+  const visualState = sessionState === "greeting" ? "greeting" : sessionState === "speaking" ? "speaking" : sessionState === "thinking" ? "thinking" : sessionState === "listening" ? "listening" : runtime.state;
+  const selectedScene = MOSS_SCENE_PRESETS.find((item) => item.id === scene);
+  const input = (key, label, multiline = false) => (0, import_react34.createElement)("label", { className: "bt-phone-field", key }, (0, import_react34.createElement)("span", null, label), multiline ? (0, import_react34.createElement)("textarea", { className: "bt-input bt-moss-textarea", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => {
+    dirty.current.add(key);
+    setDraft((current) => ({ ...current, [key]: event.target.value }));
+  } }) : (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": key, value: draft[key] ?? "", onInput: (event) => {
+    dirty.current.add(key);
+    setDraft((current) => ({ ...current, [key]: event.target.value }));
+  } }));
   const active = sessionState !== "idle" && sessionState !== "closed" && sessionState !== "stopped" && sessionState !== "error";
   return (0, import_react34.createElement)(
     "section",
@@ -16220,17 +16458,47 @@ function MossLiveSettings({ actions }) {
       (0, import_react34.createElement)("div", null, (0, import_react34.createElement)("h2", null, "MOSS Live"), (0, import_react34.createElement)("p", null, "独立全双工实时语音会话，不进入 DS Bot Bot 工具链。")),
       active ? (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: stop }, "停止 MOSS Live") : (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy || !value?.apiKeyConfigured, onClick: start }, "开始 MOSS Live")
     ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-moss-stage", "data-state": visualState, style: { "--moss-level": String(Math.max(0, Math.min(1, level))) }, role: "img", "aria-label": `MOSS Live ${visualState}` },
+      (0, import_react34.createElement)("div", { className: "bt-moss-orb", "aria-hidden": true }, (0, import_react34.createElement)("span", { className: "bt-moss-orb-halo" }), (0, import_react34.createElement)("span", { className: "bt-moss-orb-core" }), (0, import_react34.createElement)("span", { className: "bt-moss-orb-ring" }), (0, import_react34.createElement)("span", { className: "bt-moss-orb-ring bt-moss-orb-ring-2" })),
+      (0, import_react34.createElement)("div", { className: "bt-moss-stage-copy" }, (0, import_react34.createElement)("strong", null, sessionState === "idle" ? "等待开始" : sessionState === "greeting" ? "开场问候" : sessionState === "speaking" ? "MOSS 正在说话" : sessionState === "thinking" ? "MOSS 正在思考" : sessionState === "listening" ? "正在听你说" : `MOSS Live · ${runtime.state}`), (0, import_react34.createElement)("span", null, `${levelSource === "playback" ? "播放" : "输入"}音量 ${Math.round(level * 100)}%`))
+    ),
     (0, import_react34.createElement)("div", { className: "bt-plugin-report", role: "status" }, (0, import_react34.createElement)("strong", null, `运行状态：${runtime.state}`), (0, import_react34.createElement)("p", null, `会话状态：${sessionState} · 麦克风音量：${Math.round(level * 100)}%`), value?.apiKeyConfigured ? (0, import_react34.createElement)("p", null, "API Key：已配置") : (0, import_react34.createElement)("p", null, "API Key：未配置")),
     (0, import_react34.createElement)(
       "section",
       { className: "bt-phone-card" },
       (0, import_react34.createElement)("h3", null, "模型配置"),
+      (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, "场景预设"), (0, import_react34.createElement)("select", { className: "bt-input", "data-moss-live-scene": true, value: scene, onChange: (event) => {
+        const nextScene = event.target.value;
+        setScene(nextScene);
+        const preset = MOSS_SCENE_PRESETS.find((item) => item.id === nextScene);
+        if (preset?.id !== "custom") {
+          dirty.current.add("instructions");
+          setDraft((current) => ({ ...current, instructions: preset.instructions }));
+        }
+      } }, MOSS_SCENE_PRESETS.map((item) => (0, import_react34.createElement)("option", { key: item.id, value: item.id }, item.name)))),
+      selectedScene?.id !== "custom" ? (0, import_react34.createElement)("p", { className: "bt-note bt-moss-scene-note" }, selectedScene.instructions) : null,
       input("model", "模型 ID"),
       input("personaName", "Persona 名称"),
       input("personaPrompt", "Persona 提示词", true),
       input("instructions", "会话指令", true),
-      (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, "Persona 别名（逗号分隔）"), (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": "personaAliases", value: (draft.personaAliases ?? []).join(", "), onInput: (event) => setDraft((current) => ({ ...current, personaAliases: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })) })),
-      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: () => run2(() => actions.mossLiveUpdate({ config: draft }), "配置已保存") }, "保存配置")
+      (0, import_react34.createElement)("label", { className: "bt-phone-field" }, (0, import_react34.createElement)("span", null, "Persona 别名（逗号分隔）"), (0, import_react34.createElement)("input", { className: "bt-input", "data-moss-live-field": "personaAliases", value: (draft.personaAliases ?? []).join(", "), onInput: (event) => {
+        dirty.current.add("personaAliases");
+        setDraft((current) => ({ ...current, personaAliases: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }));
+      } })),
+      (0, import_react34.createElement)("button", { type: "button", className: "bt-soft", disabled: busy, onClick: saveConfig }, "保存配置")
+    ),
+    (0, import_react34.createElement)(
+      "section",
+      { className: "bt-phone-card" },
+      (0, import_react34.createElement)("h3", null, "体验设置"),
+      (0, import_react34.createElement)("label", { className: "bt-phone-check" }, (0, import_react34.createElement)("input", { type: "checkbox", checked: draft.greetingEnabled !== false, onChange: (event) => {
+        dirty.current.add("greetingEnabled");
+        setDraft((current) => ({ ...current, greetingEnabled: event.target.checked }));
+      } }), "启动时播放开场问候"),
+      input("greetingText", "开场问候文本", true),
+      (0, import_react34.createElement)("p", { className: "bt-note" }, "开场问候使用浏览器系统语音播放。麦克风会在问候期间暂时静音，结束后恢复。")
     ),
     (0, import_react34.createElement)(
       "section",
@@ -16243,8 +16511,8 @@ function MossLiveSettings({ actions }) {
     (0, import_react34.createElement)(
       "section",
       { className: "bt-phone-card" },
-      (0, import_react34.createElement)("h3", null, "实时字幕"),
-      transcript.length ? (0, import_react34.createElement)("div", { className: "bt-moss-transcript", role: "log" }, transcript.map((item, index) => (0, import_react34.createElement)("p", { key: `${index}-${item.kind}-${item.text.slice(0, 12)}`, "data-kind": item.kind }, `${item.kind === "user" ? "你" : "MOSS"}：${item.text}`))) : (0, import_react34.createElement)("p", { className: "bt-note" }, "开始会话后，实时字幕会显示在这里。"),
+      (0, import_react34.createElement)("div", { className: "bt-moss-card-heading" }, (0, import_react34.createElement)("h3", null, "实时字幕"), (0, import_react34.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: transcript.length === 0, onClick: () => downloadMossTranscript(transcript, draft, startedAt, endedAt) }, "导出记录")),
+      transcript.length ? (0, import_react34.createElement)("div", { className: "bt-moss-transcript", role: "log" }, transcript.map((item, index) => (0, import_react34.createElement)("p", { key: `${index}-${item.id ?? item.kind}-${item.text.slice(0, 12)}`, "data-kind": item.kind }, `${item.kind === "user" ? "你" : "MOSS"}：${item.text}`))) : (0, import_react34.createElement)("p", { className: "bt-note" }, "开始会话后，实时字幕会显示在这里。"),
       error ? (0, import_react34.createElement)("p", { className: "bt-error", role: "alert" }, hostText(error)) : null,
       message ? (0, import_react34.createElement)("p", { role: "status" }, message) : null
     )
@@ -16298,7 +16566,10 @@ var PLUGIN_CSS = `
 .bt-preset-actions{display:flex;flex-wrap:wrap;gap:8px}.bt-preset-result{margin-top:20px}
 .bt-plugin-report{border:1px solid var(--bt-line);border-radius:12px;padding:14px;margin:8px 0;background:var(--bt-tag-bg);line-height:1.6}
 .bt-phone-agent{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-phone-agent h2{font-size:18px;margin:0 0 6px}.bt-phone-agent h3{font-size:14px;margin:0 0 12px}.bt-phone-agent p{line-height:1.6}.bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-phone-tabs{display:flex;gap:8px;margin:16px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--bt-line)}.bt-phone-tab-active{font-weight:600;border-color:var(--bt-ink-2)}.bt-phone-test-center{display:block}.bt-phone-test-state{margin:10px 0 0;color:var(--bt-ink-2)}.bt-phone-asr-result{min-height:76px;white-space:pre-wrap;overflow-wrap:anywhere;font:15px var(--bt-font);margin:12px 0;padding:12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-textarea{min-height:72px;resize:vertical}.bt-phone-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.bt-phone-panel-heading h3{margin-bottom:6px}.bt-phone-panel-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.bt-phone-summary{margin:14px 0 0;padding:10px 12px;background:var(--bt-tag-bg);border-left:3px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review,.bt-phone-voiceprint-samples{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-phone-voiceprint-review p{margin:0}.bt-phone-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.bt-phone-field>span{font-size:12px;color:var(--bt-ink-2)}.bt-phone-check{display:flex;gap:8px;align-items:center;margin:10px 0}.bt-phone-bot{border-top:1px solid var(--bt-line);padding:14px 0}.bt-phone-bot:first-of-type{border-top:0}.bt-phone-bot>.bt-phone-field{max-width:520px}.bt-phone-diagnostic-grid{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin-top:14px;align-items:start}.bt-phone-diagnostic-grid>span{color:var(--bt-ink-2)}.bt-phone-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace;margin:8px 0 0;padding:8px;background:var(--bt-tag-bg);border-radius:8px}.bt-phone-recent{margin-top:14px}.bt-phone-recent ul{margin:8px 0 0;padding-left:22px}.bt-phone-recent li{font:12px ui-monospace,monospace;line-height:1.6;overflow-wrap:anywhere}
- .bt-moss-live{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-moss-live h2{font-size:18px;margin:0 0 6px}.bt-moss-live h3{font-size:14px;margin:0 0 12px}.bt-moss-live p{line-height:1.6}.bt-moss-live .bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-moss-textarea{min-height:88px;resize:vertical}.bt-moss-transcript{max-height:280px;overflow:auto;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-moss-transcript p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}.bt-moss-transcript p[data-kind=assistant]{color:var(--bt-ink-2)}
+.bt-moss-live{max-width:860px;color:var(--bt-ink);font:14px var(--bt-font);padding:8px 0 32px}.bt-moss-live h2{font-size:18px;margin:0 0 6px}.bt-moss-live h3{font-size:14px;margin:0 0 12px}.bt-moss-live p{line-height:1.6}.bt-moss-live .bt-phone-card{background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;padding:16px;margin-top:16px}.bt-moss-textarea{min-height:88px;resize:vertical}.bt-moss-transcript{max-height:280px;overflow:auto;padding:10px 12px;background:var(--bt-tag-bg);border:1px solid var(--bt-line);border-radius:8px}.bt-moss-transcript p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}.bt-moss-transcript p[data-kind=assistant]{color:var(--bt-ink-2)}
+.bt-moss-stage{position:relative;display:flex;align-items:center;justify-content:center;gap:24px;min-height:210px;margin:16px 0 8px;padding:20px;border:1px solid var(--bt-line);border-radius:20px;overflow:hidden;background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-star) 30%,var(--bt-card)),var(--bt-card) 65%);--moss-level:0}.bt-moss-stage[data-state=ready],.bt-moss-stage[data-state=stopped]{opacity:.82}.bt-moss-stage[data-state=thinking]{background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-accent) 24%,var(--bt-card)),var(--bt-card) 65%)}.bt-moss-stage[data-state=speaking]{background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-accent) 30%,var(--bt-card)),var(--bt-card) 65%)}.bt-moss-orb{position:relative;width:150px;height:150px;flex:none;transform:scale(calc(1 + var(--moss-level) * .22));transition:transform .12s ease-out}.bt-moss-orb-halo,.bt-moss-orb-core,.bt-moss-orb-ring{position:absolute;inset:0;border-radius:50%}.bt-moss-orb-halo{inset:-18%;background:radial-gradient(circle,color-mix(in srgb,var(--bt-star) 42%,transparent),transparent 68%);filter:blur(10px);opacity:.72;animation:bt-moss-orb-breathe 7.5s ease-in-out infinite}.bt-moss-orb-core{background:radial-gradient(40% 38% at 64% 40%,color-mix(in srgb,var(--bt-star) 70%,transparent),transparent 70%),radial-gradient(46% 42% at 42% 68%,color-mix(in srgb,var(--bt-accent) 60%,transparent),transparent 72%),radial-gradient(120% 120% at 50% 50%,var(--bt-card) 0%,color-mix(in srgb,var(--bt-star) 65%,var(--bt-card)) 58%,color-mix(in srgb,var(--bt-accent) 72%,var(--bt-ink)) 100%);box-shadow:inset -16px -12px 30px color-mix(in srgb,var(--bt-ink) 18%,transparent),0 18px 40px color-mix(in srgb,var(--bt-accent) 20%,transparent);animation:bt-moss-orb-swirl 16s linear infinite}.bt-moss-orb-core:before,.bt-moss-orb-core:after{content:"";position:absolute;inset:12%;border-radius:50%;border:1px solid color-mix(in srgb,var(--bt-card) 18%,transparent);animation:bt-moss-orb-swirl 21s linear infinite reverse}.bt-moss-orb-ring{inset:-6%;border:1px solid color-mix(in srgb,var(--bt-card) 20%,transparent);animation:bt-moss-orb-breathe 5s ease-in-out infinite}.bt-moss-orb-ring-2{inset:-16%;border-color:color-mix(in srgb,var(--bt-card) 8%,transparent);animation:bt-moss-orb-pulse 2.4s ease-out infinite}.bt-moss-stage[data-state=speaking] .bt-moss-orb-core{animation-duration:4.2s}.bt-moss-stage[data-state=speaking] .bt-moss-orb-ring-2{border-color:color-mix(in srgb,var(--bt-card) 24%,transparent)}.bt-moss-stage[data-state=greeting] .bt-moss-orb-core{animation-duration:3.6s}.bt-moss-stage-copy{display:flex;flex-direction:column;gap:6px;min-width:150px}.bt-moss-stage-copy strong{font-size:16px}.bt-moss-stage-copy span{color:var(--bt-ink-2);font-size:12px}.bt-moss-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.bt-moss-card-heading h3{margin-bottom:0}.bt-moss-scene-note{margin:2px 0 10px;padding:8px 10px;background:var(--bt-tag-bg);border-radius:8px;color:var(--bt-ink-2)}
+@keyframes bt-moss-orb-breathe{0%,100%{transform:scale(.96);opacity:.68}50%{transform:scale(1.05);opacity:.92}}@keyframes bt-moss-orb-swirl{to{transform:rotate(360deg)}}@keyframes bt-moss-orb-pulse{0%{transform:scale(.92);opacity:0}30%{opacity:.72}100%{transform:scale(1.15);opacity:0}}
+@media (prefers-reduced-motion:reduce){.bt-moss-orb-halo,.bt-moss-orb-core,.bt-moss-orb-core:before,.bt-moss-orb-core:after,.bt-moss-orb-ring{animation:none}.bt-moss-orb{transition:none}}
 `;
 
 // src/client/create-bot.js

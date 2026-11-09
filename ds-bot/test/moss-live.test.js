@@ -23,6 +23,8 @@ test('MOSS Live defaults describe the supported realtime endpoint and model', ()
     personaAliases: [],
     personaPrompt: '',
     instructions: '',
+    greetingEnabled: true,
+    greetingText: '你好，我是 DS Bot，现在可以直接和我说话。',
     maxSessionSeconds: 1800,
   })
 })
@@ -35,11 +37,15 @@ test('MOSS Live configuration accepts bounded persona settings and rejects unsaf
     personaAliases: ['露娜'],
     personaPrompt: '用自然口语回答。',
     instructions: '始终使用中文。',
+    greetingEnabled: false,
+    greetingText: '你好。',
     maxSessionSeconds: 600,
   })
   assert.equal(value.enabled, true)
   assert.equal(value.personaName, 'Luna')
   assert.deepEqual(value.personaAliases, ['露娜'])
+  assert.equal(value.greetingEnabled, false)
+  assert.equal(value.greetingText, '你好。')
   assert.throws(() => normalizeMossLiveConfig({ wsEndpoint: 'https://example.com/realtime' }), /MOSS Live endpoint/)
   assert.throws(() => normalizeMossLiveConfig({ maxSessionSeconds: 10 }), /session length/)
 })

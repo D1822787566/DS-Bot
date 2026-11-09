@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-Confirmed / Implementation in progress
+Confirmed / Phase 1 implementation in progress
 
 ## 1. 目标与使用场景
 
@@ -21,6 +21,14 @@ Confirmed / Implementation in progress
 3. 用户启动会话后，Host 建立带认证的 loopback WebSocket 中继，并由客户端取得麦克风权限。
 4. 客户端持续发送 16 kHz PCM，接收 48 kHz PCM，显示用户和 MOSS 的实时字幕，并支持 MOSS 的抢话停止。
 5. 用户停止会话后，客户端、上游 WebSocket 和 Host 中继都被释放。
+
+### 3.1 第一阶段（已确认）
+
+- `[用户确认]` 2026-11-09：先完成光球动画、音量驱动状态、开场问候、场景预设和字幕记录导出。
+- 光球只使用 DS Bot 内置 CSS 动画和实时音量数据，不复制示例项目的图片、音频或源码素材。
+- 开场问候使用浏览器的系统语音；问候期间暂时静音麦克风，问候结束后恢复。
+- 场景预设只修改当前配置草稿，用户点击“保存配置”后才持久化。
+- 字幕增量按当前语音段合并，导出 Markdown 时只生成本地下载，不上传到 MOSS 或 DS Bot。
 
 ## 4. 已确认决策
 
@@ -72,13 +80,17 @@ Confirmed / Implementation in progress
 - 麦克风帧带 `0x00` 音频标签；下行音频能按 `response.audio.context` 配对播放。
 - 上游发出 `response.audio.stop` 时，本地播放停止并回传 `playback.stopped`。
 - 停止或错误后无旧 WebSocket、麦克风轨道或播放队列残留。
+- 第一阶段页面显示光球舞台，并随输入或播放音量变化；会话状态可见 `ready`、`listening`、`thinking`、`speaking` 和 `greeting`。
+- 第一阶段配置支持开场问候开关和文本，问候期间麦克风静音，问候结束后恢复。
+- 场景预设能更新配置草稿；保存后重载仍保留指令。
+- 实时字幕增量不会重复堆叠，存在字幕时可以下载 Markdown 记录。
 - 单元测试、客户端构建和 lint 通过；真实 MOSS Key 下完成一次 Desktop 麦克风和扬声器 smoke test。
 
 ## 10. 当前实现状态
 
-- `[代码证据]` 已完成 Host 配置、Secret Store action、loopback relay、MOSS 协议清洗、客户端会话、麦克风采集、PCM 播放、字幕和插件页入口。
-- `[代码证据]` 已添加 Host、客户端和设置页回归测试；真实 MOSS API、物理麦克风和扬声器尚未验证。
+- `[代码证据]` 已完成 Host 配置、Secret Store action、loopback relay、MOSS 协议清洗、客户端会话、麦克风采集、PCM 播放、字幕、动画舞台、开场问候、场景预设、Markdown 导出和插件页入口。
+- `[代码证据]` MOSS Live 与插件页专项测试 40 项通过，客户端构建检查通过；真实 Desktop 页面已验证 `ready`、`speaking`、字幕和停止流程。
 
 ## 11. 继续入口
 
-先运行 `node --import ./test/harness-resolve.mjs --test test/moss-live.test.js test/moss-live-client.test.js test/plugins-client.test.js`，再运行 `npm run build`、`npm run lint` 和全量 `npm test`。有可用 MOSS API Key 后，在 DS Bot Desktop 中完成一次真实会话 smoke test。
+后续若进入摄像头、屏幕共享、直接文本输入或 DS Bot Bot 桥接，先新增确认文档和交互验收；当前第一阶段已完成。

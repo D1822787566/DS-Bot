@@ -19,10 +19,11 @@ const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
 const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, openPluginManager, voiceTestSummary } = module.exports
 
-async function mount(t, component, props) {
+async function mount(t, component, props, configure = () => {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   globalThis.window = dom.window
   context.window = dom.window
+  configure(dom.window)
   globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const root = createRoot(document.getElementById('root'))
@@ -98,6 +99,46 @@ test('MOSS Live settings edits the persona through the host action', async t => 
   await act(async () => name.dispatchEvent(new window.Event('input', { bubbles: true })))
   await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '保存配置').click())
   assert.equal(calls.at(-1).config.personaName, 'Luna')
+})
+
+test('MOSS Live phase one exposes scene presets, greeting settings and the animated stage', async t => {
+  const calls = []
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { enabled: false, model: 'moss-live-1.0', personaName: 'DS Bot', personaAliases: [], personaPrompt: '', instructions: '', greetingEnabled: true, greetingText: '你好。', maxSessionSeconds: 1800 }, apiKeyConfigured: false, runtime: { state: 'stopped' } }),
+    mossLiveUpdate: async value => { calls.push(value); return undefined },
+  } })
+  assert.ok(document.querySelector('.bt-moss-stage'))
+  const scene = document.querySelector('[data-moss-live-scene]')
+  await act(async () => { scene.value = 'interpreter'; scene.dispatchEvent(new window.Event('change', { bubbles: true })) })
+  const greeting = document.querySelector('[data-moss-live-field="greetingText"]')
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(greeting, '欢迎。')
+  await act(async () => greeting.dispatchEvent(new window.Event('input', { bubbles: true })))
+  await act(async () => [...document.querySelectorAll('button')].find(node => node.textContent === '保存配置').click())
+  assert.equal(calls.at(-1).config.greetingText, '欢迎。')
+  assert.match(calls.at(-1).config.instructions, /翻译/)
+})
+
+test('MOSS Live status polling keeps unsaved persona and greeting edits', async t => {
+  let poll
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { personaName: 'DS Bot', personaAliases: [], instructions: '', greetingText: '你好。' }, runtime: { state: 'stopped' } }),
+  } }, win => {
+    win.setInterval = callback => { poll = callback; return 1 }
+    win.clearInterval = () => {}
+  })
+  const name = document.querySelector('[data-moss-live-field="personaName"]')
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(name, '小莫')
+  await act(async () => name.dispatchEvent(new window.Event('input', { bubbles: true })))
+  await act(async () => { poll(); await Promise.resolve() })
+  assert.equal(name.value, '小莫')
+})
+
+test('MOSS Live restores a saved scene and offers a custom selection for user instructions', async t => {
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { personaName: 'DS Bot', personaAliases: [], instructions: '这是我自己的会话指令。' }, runtime: { state: 'stopped' } }),
+  } })
+  assert.equal(document.querySelector('[data-moss-live-scene]').value, 'custom')
+  assert.equal(document.querySelector('[data-moss-live-field="instructions"]').value, '这是我自己的会话指令。')
 })
 
 test('MOSS Live settings saves the API key through a host secret action', async t => {

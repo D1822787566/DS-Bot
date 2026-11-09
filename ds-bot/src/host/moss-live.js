@@ -13,6 +13,7 @@ const MAX_NAME = 64
 const MAX_ALIAS = 32
 const MAX_ALIASES = 8
 const MAX_PROMPT = 8000
+const MAX_GREETING_TEXT = 240
 const MAX_SESSION_SECONDS = 1800
 
 const stringValue = (value, max, fallback = '') => typeof value === 'string' ? value.trim().slice(0, max) : fallback
@@ -28,6 +29,8 @@ export function defaultMossLiveConfig() {
     personaAliases: [],
     personaPrompt: '',
     instructions: '',
+    greetingEnabled: true,
+    greetingText: '你好，我是 DS Bot，现在可以直接和我说话。',
     maxSessionSeconds: MAX_SESSION_SECONDS,
   }
 }
@@ -54,6 +57,8 @@ export function normalizeMossLiveConfig(raw = {}) {
     personaAliases: aliases,
     personaPrompt: stringValue(raw.personaPrompt, MAX_PROMPT, base.personaPrompt),
     instructions: stringValue(raw.instructions, MAX_PROMPT, base.instructions),
+    greetingEnabled: typeof raw.greetingEnabled === 'boolean' ? raw.greetingEnabled : base.greetingEnabled,
+    greetingText: stringValue(raw.greetingText, MAX_GREETING_TEXT, base.greetingText),
     maxSessionSeconds: boundedInteger(raw.maxSessionSeconds, base.maxSessionSeconds, 60, MAX_SESSION_SECONDS),
   }
 }
