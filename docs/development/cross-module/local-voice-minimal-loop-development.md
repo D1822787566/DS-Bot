@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-Confirmed（模型 smoke test 和实现验收尚未开始）
+Confirmed（模型 smoke test 已完成，完整实现验收进行中）
 
 本文件定义一个**独立的本地语音插件**，参考现有 [Phone Agent 语音插件开发文档](phone-agent-voice-plugin-development.md) 的稳定做法，但不修改或接管 Phone Agent。它只覆盖本地 TTS、语音最小闭环、首字延迟和可打断播放；唤醒词、主人声纹、Bot/session Bridge、Windows 音频和测试中心由新插件自己持有。
 
@@ -24,6 +24,11 @@ Confirmed（模型 smoke test 和实现验收尚未开始）
 - [代码证据] 当前回复已经按 `output.segment` 进入 TTS 队列，播放支持插话中断；真实 Windows 麦克风、扬声器和完整 Desktop Bridge 验收仍未完成。
 - [代码证据] 现有 Phone Agent 已拥有自己的配置、Host 生命周期、Python runtime、测试中心和音频设备控制；直接把本方案接入其中会扩大现有插件变更面。
 - [用户确认] AnifLive-TTS 暂不作为第一版语音后端。
+- [代码证据] `local-voice/` 已创建独立 DSH 插件包，包含 Host 配置校验、设备租约、loopback API、Local Voice 设置页、Node runtime client、分段 TTS loop 和并发 Python JSON-lines runtime。
+- [代码证据] 独立 `.ds-bot-local/local-voice-env` 已可加载 FunASR Paraformer-zh 和本地 MeloTTS 中文 checkpoint；当前 PyTorch 为 CPU-only。
+- [代码证据] 固定样例 smoke 已完成：runtime ready 同时报告 ASR/TTS，ASR 返回完整最终文本，MeloTTS 输出 16 kHz PCM16；预热后短句生成约 0.38–0.40 s，冷启动约 19.6 s。
+- [现状重建] MeloTTS 上游元数据与当前 FunASR 依赖存在 pip check 版本差异；运行时通过 `unidic-lite`、中文导入兼容层和本地离线模型路径工作，正式安装脚本仍需固化。
+- [代码证据] 2026-11-10 已将独立 Local Voice bundle 挂入 Desktop profile 和安装依赖，源码启动器同步插件包；重启后入口为“插件 → Local Voice（本地语音）”。已用隔离真实 Host 验证页面打开和独立配置保存；当前页面只提供模型加载与配置，明确标注完整对话仍在开发。
 
 ## 3. 期望行为
 
@@ -66,6 +71,7 @@ Confirmed（模型 smoke test 和实现验收尚未开始）
 - [候选建议] ASR 第一版继续使用分段最终文本，先把首字延迟和打断链路做稳定；流式中间转写另列为后续优化。
 - [候选建议] 先用现有 `output.segment` 作为 TTS 分段输入，不在本计划中重新设计 LLM 输出协议。
 - [候选建议] 以“语音段结束到首个可听音时间”作为主指标，以阶段耗时和插话停止时间作为诊断指标；所有指标按预热后固定中文短句重复 10 次报告 P50/P95。
+- [代码证据] `LocalVoiceLoop` 已按 LLM segment 调用本地 TTS，并以 generation 丢弃迟到 segment；runtime client 的 PCM 流支持 request-level cancel。
 
 ## 7. UI 与交互依据
 
@@ -381,3 +387,7 @@ accept new AudioSegment
 - 2026-11-08：根据用户确认保留唤醒词和主人声纹、显示完整 ASR 文本、首版只验收中文 Windows 单设备；Agent 推荐 MeloTTS 中文作为 MVP TTS，FunASR Paraformer-zh 作为最终 ASR，CosyVoice2-0.5B 作为后续候选，并确定 TTFA 与阶段耗时指标。
 - 2026-11-08：用户提出将最小闭环独立为新插件，以避免影响 Phone Agent；方案改为独立生命周期、配置、runtime、UI 和设备互斥检查，Phone Agent 保持原功能。
 - 2026-11-09：用户确认按建议执行；文档进入 Confirmed，独立插件包目录和标识确定为 `local-voice/`，显示名称为 `Local Voice`。MeloTTS 与 CosyVoice2 的取舍保留为实施阶段的本地 smoke test。
+- 2026-11-09：开始实现 `local-voice/`：完成独立包清单、Host 配置/设备租约/生命周期、loopback API、设置页 client bundle、Node runtime client 和 Python JSON-lines runtime；Node `npm test` 通过 16 项，Python runtime 测试通过 5 项。模型 smoke test 暂因 MeloTTS Windows 依赖未准备完成而保留。
+- 2026-11-09：完成本地 Paraformer-zh 与 MeloTTS 中文 checkpoint 的 CPU smoke；runtime 增加本地模型路径、离线运行、启动预热、并发取消和请求级错误回传；新增 `LocalVoiceLoop` 覆盖 LLM 分段到 TTS、generation 隔离和插话取消。Node 测试 21 项、Python 测试 11 项通过。DS Bot session、Windows 音频和唤醒/声纹路径仍待实现。
+- 2026-11-09：继续实现 runtime 可靠性：Python 仅使用 stdout 发送协议、支持后台推理期间 cancel、单模型忙状态和请求错误关联；Node client 增加启动/请求超时、UTF-8 增量解码、取消清队列和本地环境/模型路径；`LocalVoiceLoop` 在前段播放期间启动后段 TTS；加入独立环境准备脚本和 WAVE/延迟 smoke 工具。Node 测试 30 项、Python 测试 14 项通过。
+- 2026-11-10：修复独立插件在 Desktop 不可见：补齐包 bundle/patch、app 依赖/锁文件/profile、源码启动同步、Cordis service 提供和 exact API 路由；设置页增加独立配置持久化和开发状态提示。隔离真实 Host 页面和保存验证通过，Local Voice 33 项及 Desktop 相关 10 项测试通过；完整语音能力继续按原计划实现。

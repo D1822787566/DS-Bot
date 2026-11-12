@@ -17,6 +17,8 @@ asarUnpack:
   - node_modules/@deepseek-ai/libreoffice-kit/**
   # The payload Node cannot read office.js through the asar.
   - node_modules/ds-bot/office.js
+  # Python runs the Local Voice scripts as normal files outside Electron's asar.
+  - node_modules/local-voice/runtime/**
   # Automatic unpacking misses versioned Linux libraries such as libvips-cpp.so.8.18.7.
   - node_modules/@img/sharp*/**
 # The Office payload that scripts/prepare-runtime.mjs writes in beforePack (see package.json's

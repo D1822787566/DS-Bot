@@ -24,7 +24,8 @@ import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
 import { Overlays } from './overlays.js'
-import { BotPresets, MossLiveSettings, PhoneAgentSettings, openPluginManager, PLUGIN_CSS } from './plugin-page.js'
+import { BotPresets, MossLiveSettings, MossLiveCallBar, PhoneAgentSettings, openPluginManager, openMossLiveSettings, PLUGIN_CSS, MOSS_CALL_CSS } from './plugin-page.js'
+import { createMossLiveController, bindMossLiveLifecycle } from './moss-live-controller.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
@@ -688,8 +689,23 @@ export function apply(ctx) {
   actions.mossLiveUpdate = body => call('moss-live-update', body)
   actions.mossLiveSetKey = body => call('moss-live-set-key', body)
   actions.mossLiveClearKey = () => call('moss-live-clear-key')
+  actions.mossLiveVoices = () => call('moss-live-voices')
+  actions.mossLiveVoicePreview = body => call('moss-live-voice-preview', body)
   actions.mossLiveStart = () => call('moss-live-start')
   actions.mossLiveStop = () => call('moss-live-stop')
+  actions.mossLiveOpenBot = async id => {
+    await pull()
+    if (roster.getSnapshot().byId[id] !== undefined) actions.openSession(id)
+  }
+  const mossLiveController = createMossLiveController({ actions })
+  ctx.effect(() => {
+    const release = bindMossLiveLifecycle(mossLiveController, { roster })
+    return () => { void release() }
+  }, 'ds-bot: MOSS Live owner')
+  actions.openMossLive = async () => {
+    if (surface.getSnapshot().mode !== 'bot') actions.setSurface('bot')
+    await openMossLiveSettings({ actions, ui, slots: ctx.slots, navigation: ctx.get('pluginNavigation') })
+  }
   // DSH's Models page, through DS Bot's own onboarding step while it is registered.
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.('settings.onboarding') ?? []).some(entry => entry.options?.id === MODELS_STEP)
@@ -881,6 +897,8 @@ export function apply(ctx) {
     name, ...options, ...(options.priority === undefined ? {} : { priority: freePriority(ctx.slots.entries(name), options) }),
   }, component))
   const installHeader = () => ctx.slots.inject('conversation.session.header', () => installHeaderNavigation(ctx.slots, face, HeaderPill, BOT_PRIORITY))
+  ctx.effect(() => installCompiledStyles(MOSS_CALL_CSS, 'moss-call'), 'ds-bot: MOSS Live call styles')
+  shadow('shell.bottom', { priority: BOT_PRIORITY, inject: () => ({ controller: mossLiveController, geometry: { frame, sidebarPref, ui, surface }, onReturn: () => { void actions.openMossLive().catch(error => actions.reportError(error, 'moss-live-return')) } }) }, MossLiveCallBar)
 
   // The "@" menu's Bot group and the chats "+" references. The composer's controller
   // for a Session is the shell's own, so the chats open at its caret.
@@ -950,7 +968,7 @@ export function apply(ctx) {
       if (roster.getSnapshot().pluginsEnabled !== false && !dispose) {
         dispose = shadow('plugins.tab', { id: 'ds-bot-presets', order: 100, label: () => t('Bot presets'), inject: () => ({ actions }) }, BotPresets)
         disposePhone = shadow('plugins.tab', { id: 'ds-bot-phone-agent', order: 110, label: () => t('Phone Agent'), inject: () => ({ actions }) }, PhoneAgentSettings)
-        disposeMoss = shadow('plugins.tab', { id: 'ds-bot-moss-live', order: 120, label: () => t('MOSS Live'), inject: () => ({ actions }) }, MossLiveSettings)
+        disposeMoss = shadow('plugins.tab', { id: 'ds-bot-moss-live', order: 120, label: () => t('MOSS Live'), inject: () => ({ actions, controller: mossLiveController }) }, MossLiveSettings)
       } else if (roster.getSnapshot().pluginsEnabled === false && dispose) {
         dispose(); dispose = null; disposePhone?.(); disposePhone = null; disposeMoss?.(); disposeMoss = null
       }

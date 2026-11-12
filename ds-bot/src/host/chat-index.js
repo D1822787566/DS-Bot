@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { ANCHOR_LINE_MAX, HISTORY_PAGE, HISTORY_PAGES_MAX, HISTORY_TIMEOUT_MS, OWN_CHAT_BRIEF, OWN_CHAT_LINE_MAX, OWN_CHAT_READ, OWN_CHAT_SEARCH } from './constants.js'
 import { excerpt } from './text.js'
 
-const INDEX_VERSION = 3
+const INDEX_VERSION = 4
 const AROUND_LINES = 6
 const SEARCH_TERMS_MAX = 6
 const ANY_TERM_HITS = 50
@@ -22,7 +22,7 @@ const SEAL_AFTER_MS = 60_000
 
 const likeOf = term => `%${term.replace(/[\\%_]/g, char => `\\${char}`)}%`
 // Each term is a quoted FTS5 phrase when trigrams can match it, else a LIKE filter.
-export function termQuery(terms, sessions, limit, hidden) {
+export function termQuery(terms, sessions, limit, hidden, range = {}) {
   const long = terms.filter(term => [...term].length >= 3)
   const short = terms.filter(term => [...term].length < 3)
   const where = ['session IN (SELECT value FROM json_each(?))']
@@ -31,6 +31,9 @@ export function termQuery(terms, sessions, limit, hidden) {
     where.push('NOT (session = ? AND seq >= ?)')
     args.push(hidden.session, hidden.from)
   }
+  if (range.from !== undefined) { where.push('time >= ?'); args.push(range.from) }
+  if (range.to !== undefined) { where.push('time < ?'); args.push(range.to) }
+  if (range.userChatOnly) where.push("audience = 'user'")
   if (long.length > 0) {
     where.unshift('lines MATCH ?')
     args.unshift(long.map(term => `"${term.replace(/"/g, '""')}"`).join(' '))
@@ -107,15 +110,15 @@ export function install(rt) {
         db.exec(`
           DROP TABLE IF EXISTS lines;
           DROP TABLE IF EXISTS marks;
-          CREATE VIRTUAL TABLE lines USING fts5(text, session UNINDEXED, seq UNINDEXED, time UNINDEXED, who UNINDEXED, tokenize = 'trigram');
-          CREATE TABLE marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, keep INTEGER NOT NULL, sealed INTEGER NOT NULL, turn INTEGER NOT NULL);
+          CREATE VIRTUAL TABLE lines USING fts5(text, session UNINDEXED, seq UNINDEXED, time UNINDEXED, who UNINDEXED, audience UNINDEXED, tokenize = 'trigram');
+          CREATE TABLE marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, keep INTEGER NOT NULL, sealed INTEGER NOT NULL, turn INTEGER NOT NULL, audience TEXT NOT NULL);
           PRAGMA user_version = ${INDEX_VERSION};`)
       }
       return {
         db,
-        mark: db.prepare('SELECT through, keep, sealed, turn FROM marks WHERE session = ?'),
-        setMark: db.prepare('INSERT OR REPLACE INTO marks (session, through, keep, sealed, turn) VALUES (?, ?, ?, ?, ?)'),
-        insert: db.prepare('INSERT INTO lines (text, session, seq, time, who) VALUES (?, ?, ?, ?, ?)'),
+        mark: db.prepare('SELECT through, keep, sealed, turn, audience FROM marks WHERE session = ?'),
+        setMark: db.prepare('INSERT OR REPLACE INTO marks (session, through, keep, sealed, turn, audience) VALUES (?, ?, ?, ?, ?, ?)'),
+        insert: db.prepare('INSERT INTO lines (text, session, seq, time, who, audience) VALUES (?, ?, ?, ?, ?, ?)'),
         before: db.prepare('SELECT text, session, seq, time, who FROM lines WHERE session = ? AND seq < ? ORDER BY seq DESC LIMIT ?'),
         from: db.prepare('SELECT text, session, seq, time, who FROM lines WHERE session = ? AND seq >= ? ORDER BY seq LIMIT ?'),
       }
@@ -133,7 +136,7 @@ export function install(rt) {
   // Adds what a part said since its mark. Reads of one part wait for each other, so no
   // line is added twice.
   const catchingUp = new Map()
-  function catchUp(index, part) {
+  function catchUp(index, part, signal = AbortSignal.timeout(INDEX_TIMEOUT_MS)) {
     const running = catchingUp.get(part.sessionId)
     if (running) return running
     const job = (async () => {
@@ -141,7 +144,8 @@ export function install(rt) {
       if (mark?.sealed) return
       const through = mark?.through ?? -1
       const events = []
-      for await (const event of eventsBackwards(part.sessionId, AbortSignal.timeout(INDEX_TIMEOUT_MS), Infinity)) {
+      for await (const event of eventsBackwards(part.sessionId, signal, Infinity)) {
+        signal.throwIfAborted()
         if (event.seq <= through) break
         events.push(event)
       }
@@ -149,6 +153,7 @@ export function install(rt) {
       events.reverse()
       if (index !== chatIndex) return
       let keep = mark ? mark.keep === 1 : false
+      let audience = mark?.audience ?? 'internal'
       let turn = mark?.turn ?? -1
       const seal = part.endedAt !== undefined && Date.now() - part.endedAt > SEAL_AFTER_MS
       index.db.exec('BEGIN')
@@ -160,13 +165,15 @@ export function install(rt) {
           const entry = rt.historyEntry(event, false)
           if (entry === undefined) continue
           if (entry.answer) {
-            if (keep) index.insert.run(entry.text, part.sessionId, event.seq, event.time ?? 0, 'you')
+            const hidden = (rt.state?.exchangeTurns?.[part.sessionId] ?? []).includes(event.data?.turn)
+            if (keep) index.insert.run(entry.text, part.sessionId, event.seq, event.time ?? 0, 'you', hidden ? 'internal' : audience)
             continue
           }
           keep = entry.keepAnswers
-          if (entry.text !== '') index.insert.run(entry.text, part.sessionId, event.seq, event.time ?? 0, entry.who)
+          audience = entry.who === 'user' && keep ? 'user' : 'internal'
+          if (entry.text !== '') index.insert.run(entry.text, part.sessionId, event.seq, event.time ?? 0, entry.who, audience)
         }
-        index.setMark.run(part.sessionId, last, keep ? 1 : 0, seal ? 1 : 0, turn)
+        index.setMark.run(part.sessionId, last, keep ? 1 : 0, seal ? 1 : 0, turn, audience)
         index.db.exec('COMMIT')
       } catch (error) {
         index.db.exec('ROLLBACK')
@@ -191,14 +198,69 @@ export function install(rt) {
 
   // Every part, caught up. Asked from the current part, the turn that asks is left out
   // (`hidden`): it is in context, and its own question would match.
-  async function indexedParts(botId, askingId) {
+  async function indexedParts(botId, askingId, signal, selectedParts) {
     const index = await openIndex()
     if (index === null) return { index }
-    const parts = rt.partsOf(botId)
+    const parts = selectedParts ?? rt.partsOf(botId)
+    let partial = false
     // A part that cannot be read now is searched as far as it was indexed.
-    for (const part of parts) await catchUp(index, part).catch(error => rt.warn('ds-bot: indexing %s failed: %s', part.sessionId, error))
+    for (const part of parts) {
+      signal?.throwIfAborted()
+      await catchUp(index, part, signal).catch(error => {
+        signal?.throwIfAborted()
+        partial = true
+        rt.warn('ds-bot: indexing %s failed: %s', part.sessionId, error)
+      })
+    }
     const turn = askingId !== undefined && askingId === parts.at(-1)?.sessionId ? index.mark.get(askingId)?.turn : undefined
-    return { index, parts, hidden: turn === undefined || turn < 0 ? undefined : { session: askingId, from: turn } }
+    return { index, parts, partial, hidden: turn === undefined || turn < 0 ? undefined : { session: askingId, from: turn } }
+  }
+
+  // Structured, bounded history for the optional MOSS connection. Authorization
+  // stays in that connection's Host handler; existing read_own_chat is unchanged.
+  async function readBotChatContext(botId, { query = '', from, to, part, limit = 6 } = {}, signal = AbortSignal.timeout(HISTORY_TIMEOUT_MS)) {
+    const max = Math.max(1, Math.min(6, Number.isSafeInteger(limit) ? limit : 6))
+    const selected = rt.partsOf(botId).filter(item => part === undefined || item.number === part)
+    if (selected.length === 0) return { rows: [], truncated: false, partial: false }
+    const terms = [...new Set(query.toLowerCase().split(/\s+/u).filter(Boolean))].slice(0, SEARCH_TERMS_MAX)
+    const { index, partial } = await indexedParts(botId, undefined, signal, selected)
+    signal.throwIfAborted()
+    let rows = []
+    if (index !== null) {
+      const statement = termQuery(terms, selected.map(item => item.sessionId), max + 1, undefined, { from, to, userChatOnly: true })
+      rows = index.db.prepare(statement.sql).all(...statement.args)
+    } else {
+      for (const item of [...selected].reverse()) {
+        for await (const line of userChatLines(item.sessionId, signal)) {
+          signal.throwIfAborted()
+          if ((from !== undefined && line.time < from) || (to !== undefined && line.time >= to) || !terms.every(term => line.text.toLowerCase().includes(term))) continue
+          rows.push({ ...line, session: item.sessionId })
+          if (rows.length > max) break
+        }
+        if (rows.length > max) break
+      }
+    }
+    const truncated = rows.length > max
+    rows = rows.slice(0, max).map(row => ({ ...row, part: selected.find(item => item.sessionId === row.session).number }))
+    rows.sort((a, b) => a.time - b.time || a.part - b.part || a.seq - b.seq)
+    return { rows, truncated, partial: partial === true || index === null }
+  }
+
+  async function* userChatLines(sessionId, signal) {
+    let answers = []
+    for await (const event of eventsBackwards(sessionId, signal)) {
+      const entry = rt.historyEntry(event, false)
+      if (!entry) continue
+      if (entry.answer) {
+        if (!(rt.state?.exchangeTurns?.[sessionId] ?? []).includes(event.data?.turn)) answers.push({ text: entry.text, time: event.time, seq: event.seq, who: 'you' })
+        continue
+      }
+      if (entry.who === 'user' && entry.keepAnswers) {
+        yield* answers
+        if (entry.text) yield { text: entry.text, time: event.time, seq: event.seq, who: 'user' }
+      }
+      answers = []
+    }
   }
 
   // Messages with all the words, best first; with none of them having all, those with
@@ -289,5 +351,5 @@ export function install(rt) {
     ].join('\n')
   }
 
-  Object.assign(rt, { eventsBackwards, searchOwnChat, latestOwnChat, aroundOwnChat, partIndex, ownChatBrief })
+  Object.assign(rt, { eventsBackwards, searchOwnChat, latestOwnChat, aroundOwnChat, partIndex, ownChatBrief, readBotChatContext })
 }

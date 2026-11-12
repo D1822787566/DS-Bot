@@ -133,6 +133,7 @@ class FakeWebContents extends EventEmitter {
     super()
     this.win = win
     this.session = new EventEmitter()
+    this.session.setDisplayMediaRequestHandler = handler => { this.session.displayMediaRequestHandler = handler }
     this.mainFrame = {}
     this.isDestroyed = () => this.win.destroyed
     this.getURL = () => this.win.url
@@ -238,6 +239,14 @@ export const screen = {
 }
 
 export const systemPreferences = { getAnimationSettings: () => ({ prefersReducedMotion: true }) }
+
+export const desktopCapturer = {
+  getSources: async options => {
+    state.displaySourceOptions ??= []
+    state.displaySourceOptions.push(options)
+    return typeof state.displaySources === 'function' ? state.displaySources() : (state.displaySources ?? [])
+  },
+}
 
 export const clipboard = { writeText: () => {} }
 

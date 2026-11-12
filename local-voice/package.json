@@ -1,0 +1,22 @@
+{
+  "name": "local-voice",
+  "version": "0.1.0",
+  "description": "Local Chinese voice loop plugin for DSH",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "client.js", "cordis.patch.yml", "src/host/", "runtime/README.md", "runtime/main.py", "runtime/protocol.py", "runtime/service.py", "runtime/requirements.txt", "runtime/prepare_runtime.py", "runtime/download_models.py", "scripts/"],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["dsh-plugin", "voice", "asr", "tts"],
+  "dsh": {
+    "client": { "platform": "web" },
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}

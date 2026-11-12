@@ -212,6 +212,12 @@ export function install(rt) {
           await rt.load()
           return ok(await rt.phoneAgentSubmit(body))
         case 'moss-live': return ok(rt.mossLive())
+        case 'moss-live-voices':
+          await rt.load()
+          return ok(await rt.mossLiveVoices())
+        case 'moss-live-voice-preview':
+          await rt.load()
+          return ok(await rt.mossLiveVoicePreview(body))
         case 'moss-live-update':
           await rt.load()
           return ok(await rt.mossLiveUpdate(body))

@@ -43,6 +43,14 @@ describe('the app profile', () => {
     assert.ok(BUNDLES.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
     assert.ok(entries.some(entry => entry.name === 'dshmarket' && entry.disabled !== true))
   })
+
+  test('mounts Local Voice as its own plugin with a discoverable client', () => {
+    assert.ok(BUNDLES.includes('local-voice'), 'Local Voice is a desktop bundle')
+    assert.ok(entries.some(entry => entry.id === 'local-voice' && entry.name === 'local-voice' && entry.disabled !== true))
+    const manifest = JSON.parse(readFileSync(new URL('../node_modules/local-voice/package.json', import.meta.url), 'utf8'))
+    assert.equal(manifest.dsh.client.platform, 'web')
+    assert.equal(manifest.exports['./client'], './client.js')
+  })
 })
 
 describe('claimBundles', () => {

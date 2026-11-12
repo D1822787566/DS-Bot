@@ -1,7 +1,7 @@
 # Local Voice 独立语音插件
 
-记录状态：方案已确认，首版尚未实现
-最近更新：2026-11-09
+记录状态：方案已确认，首版实现进行中
+最近更新：2026-11-10
 
 ## 模块目标
 
@@ -14,10 +14,12 @@
 | ID | 事项 | 状态 | 证据/性质 |
 | --- | --- | --- | --- |
 | LV-01 | 确认独立插件边界和与 Phone Agent 的并存规则 | 完成 | [用户确认] 2026-11-08 |
-| LV-02 | 本地 TTS / ASR smoke test 和依赖准备 | 未开始 | [候选建议] 先验证 MeloTTS + Paraformer-zh |
-| LV-03 | 独立插件 Host、Bridge、runtime 和 UI 骨架 | 未开始 | [候选建议] 不导入 Phone Agent 内部模块 |
-| LV-04 | ASR → 现有 LLM → 本地 TTS → 可打断播放 | 未开始 | [用户确认] 最小闭环范围 |
+| LV-02 | 本地 TTS / ASR smoke test 和依赖准备 | 进行中 | [代码证据] 本地 Paraformer-zh 与 MeloTTS 已完成固定样例 smoke；依赖版本仍有 pip check 冲突，安装脚本未固化 |
+| LV-03 | 独立插件 Host、Bridge、runtime 和 UI 骨架 | 进行中 | [代码证据] 独立 bundle 已加入 Desktop profile、安装依赖和源码启动同步；插件页入口、Host API 与独立配置保存已真实验证；Bridge 仍待接入 |
+| LV-04 | ASR → 现有 LLM → 本地 TTS → 可打断播放 | 进行中 | [代码证据] 已实现分段 TTS loop、generation 隔离、PCM 流取消；尚未接入 DS Bot session、Windows 麦克风、VAD、唤醒词和主人声纹 |
 | LV-05 | 中文 Windows 单设备真实验收 | 未开始 | [用户确认] 第一版平台范围 |
+
+- [代码证据] 基线进度：LV-01 完成；LV-02、LV-03、LV-04 进行中；LV-05 未开始。ASR/TTS runtime 已能在本机 CPU 环境启动并完成协议级 smoke，完整音频闭环尚未接入。
 
 ## 决策记录
 
@@ -28,12 +30,25 @@
 
 ## 开发状态
 
-- [代码证据] 现有 Phone Agent 已有可复用的协议和音频处理经验，但新插件尚未创建。
+- [代码证据] 现有 Phone Agent 已有可复用的协议和音频处理经验；Local Voice 不导入 Phone Agent 内部模块。
+- [代码证据] `local-voice/` 已创建独立包清单、Host manager、中文配置校验、设备占用租约、loopback API route、设置页 client bundle、Node runtime client 和 Python JSON-lines runtime。
+- [代码证据] `local-voice` Node 测试当前为 `33 passed`；2026-11-10 Desktop profile/真实 Cordis 激活/overlay 相关测试 `10 passed`；上轮 Python runtime 测试 `14 passed`。
+- [代码证据] `.ds-bot-local/local-voice-env` 已安装 FunASR 1.4.16、MeloTTS 0.1.2、CPU-only PyTorch 2.11.0；本地 Paraformer-zh 和 MeloTTS 中文 checkpoint 已准备。
+- [代码证据] 真实 runtime smoke 已通过：`ready(asr=true, tts=true, prewarmed=true)`；Paraformer-zh 固定样例最终转写约 0.23–0.26 s；MeloTTS 预热后“你好”约 0.38–0.40 s，输出 16 kHz PCM16。冷启动含模型加载约 19.6 s。
+- [现状重建] `pip check` 仍报告 MeloTTS 元数据与当前 FunASR 环境的 transformers/fugashi/unidic/gradio 版本差异；运行时通过中文兼容层和离线本地模型路径工作，但依赖锁定和安装脚本尚未完成。
+- [代码证据] 新增 `LocalVoiceLoop`：按 LLM segment 立即启动 TTS，前段播放时继续准备后段，支持 generation 迟到段隔离和当前/排队音频取消；该 loop 尚未连接 DS Bot LLM 和 Windows 播放设备。
+- [代码证据] runtime client 已增加启动/请求超时、UTF-8 增量解析、子进程 Windows 隐藏启动、预热 capability、离线模型环境和请求级错误处理；Python dispatcher 可在 TTS 运行时接收 cancel。
+- [代码证据] `runtime/prepare_runtime.py` 与 `runtime/download_models.py` 已加入独立环境和模型准备入口；运行服务不会自行安装依赖或下载模型。
+- [代码证据] 2026-11-10 修复“看不到插件”：此前包未加入 Desktop bundles/dependencies，也没有 `dsh.bundle`；补齐 `cordis.patch.yml`、app 依赖/lock/profile 和 `start.ps1` 同步后，已在隔离真实 Host 的“插件 → Local Voice（本地语音）”打开设置页并保存设置。
+- [代码证据] 真实 Host 额外暴露并已修复两处激活错误：用 `ctx.provide('localVoice', manager)` 注册服务，Host exact route 改为 `/api/local-voice`；独立配置存于数据根下 `local-voice/settings.json`，页面明确说明完整对话未接入。
+- [代码证据] 本轮 app 全量测试 `430 passed / 1 failed / 2 skipped`；未修改的 `app/test/move-data.test.mjs:160` 因当前 Windows 能创建目标 junction 而未抛预期 EPERM，单独重跑同样失败；不是 Local Voice 启动验收结果。
 - [代码证据] 本地语音最小闭环开发草案位于 [local-voice-minimal-loop-development.md](../development/cross-module/local-voice-minimal-loop-development.md)。
-- [待完成] 本地 TTS 模型验证、独立插件骨架、设备互斥、Bridge/session 路由和真实设备验收均未开始。
+- [待完成] 依赖准备脚本已加入但未在干净环境复现；Local Voice 的 DS Bot session/LLM 适配、Windows 音频采集/VAD/唤醒词/主人声纹、PCM 播放、Phone Agent 实际占用检测和真实设备验收仍未完成。
 
 ## 继续入口
 
-- 下一步：在当前 Windows 环境中验证 MeloTTS 中文和 FunASR Paraformer-zh 的启动、模型加载、固定中文句识别、PCM 输出和取消行为。
-- 验证重点：冷启动、预热后 TTFA、ASR 最终文本、显存/CPU 占用、Phone Agent 并存时的设备冲突。
-- 下一步：创建 `local-voice/` 插件骨架，并先执行 MeloTTS + Paraformer-zh 的本地 smoke test；若 MeloTTS 不满足目标，再评估 CosyVoice2-0.5B。
+- 下一步：把 `LocalVoiceLoop` 接到 Local Voice Host 的 DS Bot session/LLM 回调，先用固定 ASR fixture 和 mock LLM 验证首段 TTS、播放取消和 generation 隔离，再接入 Windows 音频。
+- 当前用户进程仍运行旧 Desktop profile；需从托盘完全退出后通过 `start.ps1` 重启，随后打开“插件 → Local Voice（本地语音）”。本轮只刷新 Local Voice 已安装文件，未关闭用户的 DS Bot 或 Phone Agent。
+- 已完成：Node runtime client 支持 ready/capability、最终转写、PCM 流、request-level cancel；Python runtime 支持 hello、并发 transcribe/synthesize、cancel、PCM16 校验、离线模型路径和 TTS 预热。
+- 验证重点：DS Bot session 路由、首段播放开始、打断后的迟到事件隔离、唤醒词/主人声纹必经路径、真实设备 TTFA。
+- 若 MeloTTS 的 Windows 依赖或延迟不满足目标，再按开发文档评估 CosyVoice2-0.5B；在 smoke test 完成前不宣称本地 TTS 已可用。

@@ -1,0 +1,4 @@
+# Keep Local Voice independent from the DS Bot and Phone Agent host modules.
+- insert:
+    - id: local-voice
+      name: local-voice

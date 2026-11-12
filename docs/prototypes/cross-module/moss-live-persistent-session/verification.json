@@ -1,0 +1,191 @@
+{
+  "ok": true,
+  "errors": [],
+  "networkRequests": 0,
+  "reports": [
+    {
+      "variant": "a",
+      "desktop": {
+        "width": 1320,
+        "height": 860,
+        "documentWidth": 1320,
+        "controller": {
+          "x": 272,
+          "y": 792,
+          "width": 1048,
+          "height": 68
+        },
+        "children": [
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 792
+      },
+      "narrow": {
+        "width": 430,
+        "height": 900,
+        "documentWidth": 430,
+        "controller": {
+          "x": 62,
+          "y": 812,
+          "width": 368,
+          "height": 88
+        },
+        "children": [
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 812
+      },
+      "interactions": "pass"
+    },
+    {
+      "variant": "b",
+      "desktop": {
+        "width": 1320,
+        "height": 860,
+        "documentWidth": 1320,
+        "controller": {
+          "x": 922,
+          "y": 148,
+          "width": 370,
+          "height": 100
+        },
+        "children": [
+          {
+            "label": "收起字幕",
+            "visible": true
+          },
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 860
+      },
+      "narrow": {
+        "width": 430,
+        "height": 900,
+        "documentWidth": 430,
+        "controller": {
+          "x": 74,
+          "y": 187,
+          "width": 344,
+          "height": 90
+        },
+        "children": [
+          {
+            "label": "收起字幕",
+            "visible": true
+          },
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 900
+      },
+      "interactions": "pass"
+    },
+    {
+      "variant": "c",
+      "desktop": {
+        "width": 1320,
+        "height": 860,
+        "documentWidth": 1320,
+        "controller": {
+          "x": 12,
+          "y": 612,
+          "width": 248,
+          "height": 189
+        },
+        "children": [
+          {
+            "label": "停止共享",
+            "visible": true
+          },
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 860
+      },
+      "narrow": {
+        "width": 430,
+        "height": 900,
+        "documentWidth": 430,
+        "controller": {
+          "x": 62,
+          "y": 804,
+          "width": 368,
+          "height": 96
+        },
+        "children": [
+          {
+            "label": "停止共享",
+            "visible": true
+          },
+          {
+            "label": "静音麦克风",
+            "visible": true
+          },
+          {
+            "label": "返回 MOSS Live",
+            "visible": true
+          },
+          {
+            "label": "结束通话",
+            "visible": true
+          }
+        ],
+        "composerBottom": 804
+      },
+      "interactions": "pass"
+    }
+  ]
+}

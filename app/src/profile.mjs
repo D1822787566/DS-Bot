@@ -6,7 +6,7 @@ import { initProfile, loadProfileDirectory, readProfileManifest, resolveProfileD
 export const PROFILE = 'ds-bot'
 // DSH's shared core, DSH's web front end (the window) and voice input, then the Bot team.
 // Bundles the user installs follow.
-export const BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-voice-input-bundle', '@deepseek-ai/dsh-experimental-plugin-market-bundle', 'dshmarket', 'ds-bot']
+export const BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-voice-input-bundle', '@deepseek-ai/dsh-experimental-plugin-market-bundle', 'dshmarket', 'ds-bot', 'local-voice']
 // The first-run check reads a copy of the team's chats without the Bot team running on them.
 // DSH reads a log the same way whatever the profile mounts.
 export const CHECK_PROFILE = 'import-check'

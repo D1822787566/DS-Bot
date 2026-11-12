@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath($PSScriptRoot)
 $plugin = Join-Path $repo 'ds-bot'
+$localVoice = Join-Path $repo 'local-voice'
 $appDir = Join-Path $repo 'app'
 if (-not [IO.Path]::IsPathRooted($DataRoot)) { $DataRoot = Join-Path $repo $DataRoot }
 $DataRoot = [IO.Path]::GetFullPath($DataRoot)
@@ -51,6 +52,9 @@ function Install-IfChanged {
 
 function Sync-LocalPackageFiles {
     param([string]$Source, [string]$Target, $Package)
+    $targetRoot = [IO.Path]::GetFullPath((Join-Path $appDir 'node_modules')) + [IO.Path]::DirectorySeparatorChar
+    $Target = [IO.Path]::GetFullPath($Target)
+    if (-not $Target.StartsWith($targetRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Package target is outside app/node_modules: $Target" }
     if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Recurse -Force }
     [void][IO.Directory]::CreateDirectory($Target)
     foreach ($entry in @($Package.files)) {
@@ -77,14 +81,19 @@ try {
     $packJson = Invoke-Npm $plugin @('pack', '--dry-run', '--json', '--ignore-scripts')
     $package = @((($packJson -join "`n") | ConvertFrom-Json))[0]
     if (-not $package.files) { throw 'npm did not return the plugin package file list.' }
+    $localVoiceJson = Invoke-Npm $localVoice @('pack', '--dry-run', '--json', '--ignore-scripts')
+    $localVoicePackage = @((($localVoiceJson -join "`n") | ConvertFrom-Json))[0]
+    if (-not $localVoicePackage.files) { throw 'npm did not return the Local Voice package file list.' }
     $appFiles = @((Join-Path $appDir 'package.json'), (Join-Path $appDir 'package-lock.json'), (Join-Path $appDir '.npmrc'))
     $appFiles += @($package.files | ForEach-Object { Join-Path $plugin $_.path })
+    $appFiles += @($localVoicePackage.files | ForEach-Object { Join-Path $localVoice $_.path })
     $appHash = Get-SourceHash $appFiles
     Install-IfChanged $appDir $appHash (Join-Path $appDir 'node_modules/electron/package.json')
     # npm can reuse a cached file: dependency when the package version stays the
     # same. Refresh the installed DS Bot package from the exact file list above,
     # so the desktop Host never runs an older voice-runtime copy.
     Sync-LocalPackageFiles $plugin (Join-Path $appDir 'node_modules/ds-bot') $package
+    Sync-LocalPackageFiles $localVoice (Join-Path $appDir 'node_modules/local-voice') $localVoicePackage
 
     $electron = Join-Path $appDir 'node_modules/electron/dist/electron.exe'
     if (-not (Test-Path -LiteralPath $electron)) {

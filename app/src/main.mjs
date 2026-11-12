@@ -5,7 +5,7 @@
 // the team window hides it; the tray brings it back and its Quit ends the app (shell.mjs). Only
 // what the start window and the tray need is imported up front; the rest loads once the start
 // window is up (docs/plans/2026-10-26-start-window.md §11).
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, screen, session, shell as electronShell, systemPreferences, Tray, WebContentsView } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, screen, session, shell as electronShell, systemPreferences, Tray, WebContentsView } from 'electron'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { release } from 'node:os'
@@ -1229,6 +1229,38 @@ async function flushDeferredUpdate() {
   await downloadPrompt.flush()
 }
 
+// Electron needs a handler for getDisplayMedia on Windows. Only the team's main frame may
+// ask, in a click; its existing card lets the user choose a screen without granting audio.
+function bindScreenSharing(win) {
+  const contents = win.webContents
+  let choosing = false
+  contents.session.setDisplayMediaRequestHandler(async (request, callback) => {
+    let requestOrigin
+    try { requestOrigin = new URL(request.securityOrigin).origin } catch { /* an invalid origin is refused */ }
+    const allowed = () => mainWindow === win && !win.isDestroyed()
+      && request.frame != null && request.frame === contents.mainFrame
+      && requestOrigin === origin && contents.getURL().startsWith(`${origin}/`)
+      && request.userGesture === true && request.videoRequested === true && request.audioRequested !== true
+    const finish = streams => { try { callback(streams) } catch { /* the requesting frame may have gone */ } }
+    if (choosing || !allowed()) { finish({}); return }
+    choosing = true
+    let selected
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+      if (!allowed() || sources.length === 0) return
+      const zh = lang() === 'zh'
+      const answer = await askInWindow({
+        message: zh ? '选择要共享的屏幕' : 'Choose a screen to share',
+        detail: zh ? '选中的屏幕画面将实时发送给 MOSS Live。不会共享系统声音。' : 'The selected screen will be sent to MOSS Live. System audio is not shared.',
+        buttons: [{ label: zh ? '取消' : 'Cancel', primary: true }, ...sources.map(source => ({ label: source.name }))],
+        cancel: 0,
+      }, { front: true })
+      if (allowed() && Number.isInteger(answer) && answer > 0) selected = sources[answer - 1]
+    } catch { /* unavailable capture is refused, without granting another source */ }
+    finally { choosing = false; finish(selected ? { video: selected } : {}) }
+  })
+}
+
 // Hidden, on the rect the start window grows into; the start window shows it at the hand-off.
 function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors
@@ -1268,6 +1300,7 @@ function createWindow() {
   // The tabs that outlived the last window join this one.
   botViews.attach(win)
   const contents = win.webContents
+  bindScreenSharing(win)
   // The session is the same for every window of the app, so the handler is bound once.
   if (!downloadsBound) {
     downloadsBound = true

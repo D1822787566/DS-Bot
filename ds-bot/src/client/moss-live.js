@@ -1,6 +1,19 @@
 const SAMPLE_RATE = 48_000
 const TARGET_RATE = 16_000
 const FRAME_SAMPLES = 320
+const SCREEN_FRAME_TAG = 0x02
+const SCREEN_FRAME_INTERVAL_MS = 1000
+const SCREEN_MAX_WIDTH = 1280
+const SCREEN_MAX_FRAME_BYTES = 512 * 1024
+const SCREEN_JPEG_QUALITY = 0.72
+
+function tagScreenFrame(frame) {
+  const payload = frame instanceof Uint8Array ? frame : new Uint8Array(frame)
+  const tagged = new Uint8Array(payload.byteLength + 1)
+  tagged[0] = SCREEN_FRAME_TAG
+  tagged.set(payload, 1)
+  return tagged
+}
 
 export function buildMossSessionUrl({ port, token }) {
   return `ws://127.0.0.1:${Number(port)}/?token=${encodeURIComponent(String(token ?? ''))}`
@@ -21,18 +34,41 @@ export function mossSessionUpdatePayload(config = {}) {
   }
 }
 
+export function mossMediaConfigurePayload(config = {}) {
+  return {
+    action: 'media.configure',
+    profile: config.mediaProfile === 'low' ? 'low' : 'standard',
+    playback: 'client',
+    video: {
+      max_long_side: Number.isInteger(config.videoMaxLongSide) ? config.videoMaxLongSide : 1024,
+      jpeg_quality: typeof config.videoJpegQuality === 'number' ? config.videoJpegQuality : 0.72,
+      interval_ms: Number.isInteger(config.videoIntervalMs) ? config.videoIntervalMs : 1000,
+    },
+  }
+}
+
+function replyKey(runId, turnId) {
+  return typeof runId === 'string' && runId && typeof turnId === 'string' && turnId ? JSON.stringify([runId, turnId]) : null
+}
+
+function transcriptReplyId(data) {
+  const key = replyKey(data.run_id, data.turn_id)
+  return key ? { id: `reply:${key}` } : data.run_id === undefined ? {} : { id: `run:${String(data.run_id)}` }
+}
+
 export function transcriptEvent(action, data = {}) {
-  if (action === 'input.transcript.updated' || action === 'input.transcript.done') return {
-    kind: 'user', done: action.endsWith('.done'), text: String(data.text ?? ''),
+  if (action === 'input.transcript.updated' || action === 'input.transcript.done' || action === 'input.transcript.revised') return {
+    kind: 'user', done: action !== 'input.transcript.updated', text: String(data.text ?? ''),
+    ...(action === 'input.transcript.revised' ? { revised: true } : {}),
     ...(data.turn === undefined ? {} : { id: `turn:${String(data.turn)}` }),
   }
   if (action === 'output.transcript.updated' || action === 'output.transcript.done') return {
     kind: 'assistant', done: action.endsWith('.done'), text: String(data.text ?? ''),
-    ...(data.run_id === undefined ? {} : { id: `run:${String(data.run_id)}` }),
+    ...transcriptReplyId(data),
   }
   if (action === 'response.interrupted') return {
     kind: 'assistant', done: true, interrupted: true, text: String(data.text ?? ''),
-    ...(data.run_id === undefined ? {} : { id: `run:${String(data.run_id)}` }),
+    ...transcriptReplyId(data),
   }
   return { kind: undefined, done: false, text: '' }
 }
@@ -42,15 +78,15 @@ export function mergeTranscriptEvent(items = [], next) {
   const value = { ...next, text: String(next.text), at: next.at ?? new Date().toISOString() }
   let index = -1
   if (value.id) index = items.findLastIndex?.(item => item.id === value.id) ?? [...items].map(item => item.id).lastIndexOf(value.id)
-  if (index < 0 && !value.id) {
+  if (index < 0) {
     for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
-      if (items[cursor].kind === value.kind && items[cursor].done !== true) { index = cursor; break }
-      if (items[cursor].kind !== value.kind) break
+      if (items[cursor].kind === value.kind && items[cursor].done !== true && (!value.id || !items[cursor].id)) { index = cursor; break }
+      if (!value.id && items[cursor].kind !== value.kind) break
     }
   }
   if (index >= 0 && items[index].done === true && value.done !== true) return items
   if (index < 0) return [...items, value]
-  if (items[index].done === true && value.interrupted !== true && next.done === true) return items
+  if (items[index].done === true && value.interrupted !== true && value.revised !== true && next.done === true) return items
   const updated = items.slice()
   updated[index] = { ...value, at: items[index].at ?? value.at }
   return updated
@@ -157,6 +193,7 @@ export class MossMicCapture {
     const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext
     if (!Context) throw new Error('当前环境不支持实时音频')
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false })
+    this.setEnabled(this.enabled)
     this.ctx = new Context({ latencyHint: 'interactive' })
     this.url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }))
     await this.ctx.audioWorklet.addModule(this.url)
@@ -194,6 +231,104 @@ export class MossMicCapture {
     if (this.url) URL.revokeObjectURL(this.url)
     this.url = null
     this.onLevel(0)
+  }
+}
+
+export class MossScreenCapture {
+  constructor({ onFrame, onStream, onStopped, frameIntervalMs = SCREEN_FRAME_INTERVAL_MS, maxWidth = SCREEN_MAX_WIDTH, jpegQuality = SCREEN_JPEG_QUALITY } = {}) {
+    this.onFrame = onFrame ?? (() => {})
+    this.onStream = onStream ?? (() => {})
+    this.onStopped = onStopped ?? (() => {})
+    this.frameIntervalMs = frameIntervalMs
+    this.maxWidth = maxWidth
+    this.jpegQuality = jpegQuality
+    this.stream = null
+    this.video = null
+    this.canvas = null
+    this.timer = null
+    this.capturing = false
+    this.ended = false
+    this.handleEnded = () => {
+      if (this.ended) return
+      this.ended = true
+      this.onStopped()
+      void this.stop()
+    }
+  }
+
+  async start() {
+    if (this.stream) return this.stream
+    this.ended = false
+    const getDisplayMedia = globalThis.navigator?.mediaDevices?.getDisplayMedia
+    if (typeof getDisplayMedia !== 'function') throw new Error('当前环境不支持屏幕共享')
+    const documentRef = globalThis.document
+    const video = documentRef?.createElement?.('video')
+    const canvas = documentRef?.createElement?.('canvas')
+    if (!video || !canvas) throw new Error('当前环境不支持屏幕采集')
+    const stream = await getDisplayMedia.call(globalThis.navigator.mediaDevices, {
+      video: { frameRate: { ideal: 2, max: 5 }, width: { ideal: this.maxWidth, max: 1920 } },
+      audio: false,
+    })
+    if (this.ended) {
+      for (const track of stream.getTracks()) track.stop()
+      return null
+    }
+    this.stream = stream
+    this.video = video
+    this.canvas = canvas
+    video.muted = true
+    video.playsInline = true
+    video.srcObject = stream
+    const track = stream.getVideoTracks?.()[0]
+    track?.addEventListener?.('ended', this.handleEnded)
+    if (track) track.onended = this.handleEnded
+    await video.play?.()
+    if (this.ended || this.stream !== stream) return null
+    this.onStream(stream)
+    await this.captureFrame()
+    if (!this.ended) this.timer = globalThis.setInterval?.(() => { void this.captureFrame().catch(() => this.handleEnded()) }, this.frameIntervalMs) ?? null
+    return stream
+  }
+
+  async captureFrame() {
+    if (!this.stream || !this.video || !this.canvas || this.capturing) return
+    const width = Number(this.video.videoWidth) || 0
+    const height = Number(this.video.videoHeight) || 0
+    if (!width || !height) return
+    const scale = Math.min(1, this.maxWidth / width)
+    const targetWidth = Math.max(1, Math.round(width * scale))
+    const targetHeight = Math.max(1, Math.round(height * scale))
+    this.canvas.width = targetWidth
+    this.canvas.height = targetHeight
+    const context = this.canvas.getContext?.('2d')
+    if (!context || typeof this.canvas.toBlob !== 'function') return
+    this.capturing = true
+    try {
+      context.drawImage(this.video, 0, 0, targetWidth, targetHeight)
+      const blob = await new Promise(resolve => this.canvas.toBlob(resolve, 'image/jpeg', this.jpegQuality))
+      if (!this.stream || this.ended || !blob || blob.size <= 0 || blob.size > SCREEN_MAX_FRAME_BYTES) return
+      const frame = new Uint8Array(await blob.arrayBuffer())
+      if (!this.stream || this.ended) return
+      this.onFrame(frame)
+    } finally {
+      this.capturing = false
+    }
+  }
+
+  async stop() {
+    this.ended = true
+    if (!this.stream && !this.video && !this.canvas) return
+    if (this.timer !== null) globalThis.clearInterval?.(this.timer)
+    this.timer = null
+    const stream = this.stream
+    this.stream = null
+    this.video?.pause?.()
+    if (this.video) this.video.srcObject = null
+    for (const track of stream?.getTracks?.() ?? []) track.stop()
+    this.video = null
+    this.canvas = null
+    this.capturing = false
+    this.onStream(null)
   }
 }
 
@@ -313,7 +448,7 @@ export class MossAudioPlayer {
 }
 
 export class MossLiveSession {
-  constructor({ port, token, config, onState, onTranscript, onEvent, onLevel } = {}) {
+  constructor({ port, token, config, onState, onTranscript, onEvent, onLevel, onScreenStream, screenCaptureFactory } = {}) {
     this.port = port
     this.token = token
     this.config = config ?? {}
@@ -321,17 +456,27 @@ export class MossLiveSession {
     this.onTranscript = onTranscript ?? (() => {})
     this.onEvent = onEvent ?? (() => {})
     this.onLevel = onLevel ?? (() => {})
+    this.onScreenStream = onScreenStream ?? (() => {})
+    this.screenCaptureFactory = screenCaptureFactory ?? (options => new MossScreenCapture(options))
     this.ws = null
     this.mic = null
+    this.screen = null
+    this.micEnabled = true
     this.player = new MossAudioPlayer({
       onChunkDone: item => this.playbackChunkDone(item),
       onDrain: () => {
+        this.completePlayback()
         if (this.state === 'speaking') this.setState('ready')
         this.onEvent({ type: 'ui.playback_idle' })
       },
       onLevel: (level, source) => this.onLevel(level, source),
     })
     this.pendingInfo = null
+    this.voiceChangePending = false
+    this.mediaConfigurationPending = false
+    this.mediaReady = false
+    this.playbackReplies = new Map()
+    this.closePromise = null
     this.state = 'idle'
   }
 
@@ -341,18 +486,27 @@ export class MossLiveSession {
     if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(value))
   }
 
+  sendBinary(value) {
+    if (this.ws?.readyState === 1) this.ws.send(value)
+  }
+
   async connect() {
     if (this.ws) return
+    if (this.closePromise) { await this.closePromise; this.closePromise = null }
     const Socket = globalThis.WebSocket
     if (!Socket) throw new Error('当前环境不支持 WebSocket')
     this.setState('connecting')
     const ws = new Socket(buildMossSessionUrl({ port: this.port, token: this.token }))
     this.ws = ws
     ws.binaryType = 'arraybuffer'
-    ws.onopen = () => this.send({ action: 'attach_session' })
-    ws.onmessage = event => typeof event.data === 'string' ? this.handleJson(event.data) : this.handleBinary(event.data)
-    ws.onerror = () => this.setState('error')
-    ws.onclose = () => { this.ws = null; if (this.state !== 'stopped') this.setState('closed') }
+    ws.onopen = () => { if (this.ws === ws) this.send({ action: 'attach_session' }) }
+    ws.onmessage = event => {
+      if (this.ws !== ws) return
+      if (typeof event.data === 'string') this.handleJson(event.data)
+      else this.handleBinary(event.data)
+    }
+    ws.onerror = () => { if (this.ws === ws) void this.endConnection('error') }
+    ws.onclose = () => { if (this.ws === ws) void this.endConnection('closed') }
   }
 
   handleJson(raw) {
@@ -365,28 +519,70 @@ export class MossLiveSession {
     if (transcript.kind) this.onTranscript(transcript)
     if (action === 'session_attached') {
       this.setState('attached')
-      this.send(mossSessionUpdatePayload(this.config))
+      if (this.config.mode === 'interpret') {
+        this.sendMediaConfiguration()
+      } else if (String(this.config.voiceName ?? '').trim()) {
+        this.voiceChangePending = true
+        this.send({ action: 'change_voice', voice_name: String(this.config.voiceName).trim() })
+      } else {
+        this.sendSessionUpdate()
+      }
+    } else if (action === 'voice_changed') {
+      if (this.voiceChangePending) {
+        this.voiceChangePending = false
+        this.sendSessionUpdate()
+      }
     } else if (action === 'session.updated') {
-      if (data.error) { this.setState('error'); return }
-      this.send({ action: 'media.mode', binary_protocol: 'tagged-v1' })
+      if (data.error) { void this.endConnection('error'); return }
+      this.sendMediaConfiguration()
+    } else if (action === 'media.configured') {
+      if (data.error) { void this.endConnection('error'); return }
+      this.mediaConfigurationPending = false
+      this.mediaReady = true
+      if (this.mic) this.send({ action: 'mic_state', enabled: this.mic.enabled !== false })
       this.setState('ready')
     } else if (action === 'input.speech.started') this.setState('listening')
     else if (action === 'input.speech.stopped') this.setState('thinking')
     else if (action === 'response.audio.started') this.setState('speaking')
     else if (action === 'response.audio.context') this.pendingInfo = { chunkId: data.chunk_id, runId: data.run_id, turnId: data.turn_id }
+    else if (action === 'response.audio.done') {
+      const key = replyKey(data.run_id, data.turn_id)
+      if (key) {
+        this.playbackReplies.set(key, { ...this.playbackReplies.get(key), runId: data.run_id, turnId: data.turn_id, audioDone: true })
+        this.completePlayback()
+      }
+    }
     else if (action === 'response.audio.stop') {
+      for (const reply of this.playbackReplies.values()) reply.cancelled = true
       const stopped = this.player.stop()
       const info = stopped.info
-      this.send({ action: 'playback.stopped', run_id: data.run_id ?? info?.runId, turn_id: data.turn_id ?? info?.turnId, played_audio_ms: Math.round(stopped.playedMs) })
+      const runId = data.run_id ?? info?.runId, turnId = data.turn_id ?? info?.turnId
+      const key = replyKey(runId, turnId)
+      if (key) {
+        this.playbackReplies.set(key, { runId, turnId, cancelled: true })
+        this.send({ action: 'playback.stopped', run_id: runId, turn_id: turnId, played_audio_ms: Math.round(stopped.playedMs) })
+      }
       this.setState('listening')
     } else if (action === 'response.ended') {
       if (this.player.items.size === 0) this.setState('ready')
       else this.setState('speaking')
     }
-    else if (action === 'error' && !data.local) this.setState('error')
+    else if (action === 'error' && (data.fatal === true || data.error?.fatal === true || ['session_expired', 'session_closed', 'unauthorized', 'invalid_api_key'].includes(data.error?.code))) void this.endConnection('error')
+  }
+
+  sendSessionUpdate() {
+    this.send(mossSessionUpdatePayload(this.config))
+  }
+
+  sendMediaConfiguration() {
+    if (this.mediaConfigurationPending) return
+    this.mediaConfigurationPending = true
+    this.send({ action: 'media.mode', binary_protocol: 'tagged-v1' })
+    this.send(mossMediaConfigurePayload(this.config))
   }
 
   handleBinary(buffer) {
+    if (this.closePromise) return
     const info = this.pendingInfo
     this.pendingInfo = null
     this.player.enqueue(buffer, info)
@@ -395,33 +591,115 @@ export class MossLiveSession {
   playbackChunkDone(item) {
     if (!item.info) return
     const info = item.info
+    if (!replyKey(info.runId, info.turnId) || typeof info.chunkId !== 'string' || !info.chunkId) return
     this.send({ action: 'playback.chunk.completed', chunk_id: info.chunkId, run_id: info.runId, turn_id: info.turnId })
+    this.completePlayback()
+  }
+
+  completePlayback() {
+    for (const reply of this.playbackReplies.values()) {
+      if (!reply.audioDone || reply.completed || reply.cancelled) continue
+      if ([...this.player.items].some(item => item.info?.runId === reply.runId && item.info?.turnId === reply.turnId)) continue
+      reply.completed = true
+      this.send({ action: 'playback.completed', run_id: reply.runId, turn_id: reply.turnId })
+    }
   }
 
   async startMic() {
     if (!this.ws) await this.connect()
     if (this.mic) return
-    this.mic = new MossMicCapture({ onFrame: pcm => {
+    const capture = new MossMicCapture({ onFrame: pcm => {
+      if (!this.mediaReady) return
       const bytes = new Uint8Array(1 + pcm.byteLength)
       bytes[0] = 0
       bytes.set(new Uint8Array(pcm.buffer), 1)
       if (this.ws?.readyState === 1) this.ws.send(bytes)
     }, onLevel: level => this.onLevel(level, 'mic') })
-    await this.mic.start()
-    this.send({ action: 'mic_state', enabled: true })
+    this.mic = capture
+    capture.setEnabled(this.micEnabled)
+    try { await capture.start() } catch (error) { await capture.stop(); if (this.mic === capture) this.mic = null; throw error }
+    if (this.mic !== capture || !this.ws) { await capture.stop(); return }
+    if (this.mediaReady) this.send({ action: 'mic_state', enabled: capture.enabled !== false })
   }
 
   setMicEnabled(enabled) {
+    this.micEnabled = Boolean(enabled)
     this.mic?.setEnabled(enabled)
-    this.send({ action: 'mic_state', enabled: Boolean(enabled) })
+    if (this.mediaReady) this.send({ action: 'mic_state', enabled: Boolean(enabled) })
   }
 
-  async stop() {
-    this.setState('stopped')
-    await this.mic?.stop?.()
-    this.mic = null
-    await this.player.close()
-    try { this.ws?.close(1000, 'stopped') } catch { /* ignore */ }
-    this.ws = null
+  async startScreenShare() {
+    if (this.ws?.readyState !== 1) throw new Error('请先连接 MOSS Live，再开启屏幕共享。')
+    if (this.screen) return
+    let capture
+    capture = this.screenCaptureFactory({
+      frameIntervalMs: Number.isInteger(this.config.videoIntervalMs) ? this.config.videoIntervalMs : SCREEN_FRAME_INTERVAL_MS,
+      maxWidth: Number.isInteger(this.config.videoMaxLongSide) ? this.config.videoMaxLongSide : SCREEN_MAX_WIDTH,
+      jpegQuality: typeof this.config.videoJpegQuality === 'number' ? this.config.videoJpegQuality : SCREEN_JPEG_QUALITY,
+      onFrame: frame => { if (this.screen === capture) this.sendBinary(tagScreenFrame(frame)) },
+      onStream: stream => {
+        if (this.screen !== capture) return
+        if (stream) {
+          this.send({ action: 'video.state', source: 'screen', enabled: true })
+          this.send({ action: 'video.stream_focus', source: 'screen' })
+        }
+        this.onScreenStream(stream)
+      },
+      onStopped: () => {
+        if (this.screen !== capture) return
+        this.screen = null
+        this.send({ action: 'video.state', source: 'screen', enabled: false })
+        this.onScreenStream(null)
+      },
+    })
+    this.screen = capture
+    try {
+      await capture.start()
+      return this.screen === capture
+    } catch (error) {
+      try { await capture.stop?.() } catch { /* ignore screen cleanup failure */ }
+      if (this.screen === capture) {
+        this.screen = null
+        this.send({ action: 'video.state', source: 'screen', enabled: false })
+        this.onScreenStream(null)
+      }
+      const message = error?.name === 'NotSupportedError' ? '当前桌面环境不支持屏幕共享，请重启最新版 DS Bot 后重试。'
+        : error?.name === 'NotAllowedError' || error?.name === 'AbortError' ? '屏幕共享已取消或未获授权，请重新点击「共享屏幕」。'
+          : error?.message || '屏幕共享失败，请重试。'
+      throw new Error(message, { cause: error })
+    }
   }
+
+  async stopScreenShare() {
+    const capture = this.screen
+    this.screen = null
+    if (!capture) return
+    try { await capture.stop?.() }
+    finally {
+      this.send({ action: 'video.state', source: 'screen', enabled: false })
+      this.onScreenStream(null)
+    }
+  }
+
+  endConnection(state) {
+    this.setState(state)
+    if (this.closePromise) return this.closePromise
+    this.mediaReady = false
+    this.mediaConfigurationPending = false
+    this.voiceChangePending = false
+    this.pendingInfo = null
+    this.playbackReplies.clear()
+    const socket = this.ws
+    this.ws = null
+    if (socket) {
+      socket.onopen = null; socket.onmessage = null; socket.onerror = null; socket.onclose = null
+      try { socket.close?.(1000, 'stopped') } catch { /* ignore */ }
+    }
+    const mic = this.mic
+    this.mic = null
+    this.closePromise = Promise.allSettled([this.stopScreenShare(), mic?.stop?.(), this.player.close()]).then(() => {})
+    return this.closePromise
+  }
+
+  async stop() { await this.endConnection('stopped') }
 }

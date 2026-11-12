@@ -58,8 +58,9 @@
 - [用户确认] D-PAVP-026 · 2026-11-08 · 将 Phone Agent 测试能力整理为独立“语音测试中心”，与运行配置分开，并按麦克风、唤醒词、ASR、声纹、TTS/扬声器和完整链路分板块展示。原因：用户认为现有混合测试卡片不适合逐项验收。影响：需要独立测试页面/入口、单测试互斥、ASR 最终文本预览和默认不提交 Bot 的测试边界。
 - [用户确认] D-PAVP-027 · 2026-11-08 · 主人声纹测试改为语音测试中心中的持续测试项：用户点击“启动声纹测试”后持续监听并对每个 VAD 语音段执行 ASR/声纹验证，页面显示运行状态、累计结果和最近样本；用户点击“停止声纹测试”后才退出测试模式，测试内容始终不提交 Bot。状态：生效，supersede D-PAVP-024。原因：一次性“下一段语音”不能支持连续重复验收，也无法让用户持续观察声纹通过率。影响：运行时不再设置 20 秒超时；需要显式 start/stop 命令、持续状态和每段结果计数。
 - [用户确认] D-PAVP-028 · 2026-11-08 · 首轮唤醒词与需求被 VAD 分成两段时，唤醒词单独一段不提交，但首轮需求提交在原始 ASR 文本前补充目标 Bot 唤醒词；唤醒词与需求同段时保持 ASR 原文，不重复补词。原因：首轮只显示需求文本会让用户误以为唤醒词被忽略。影响：需要在首轮准入前补充路由上下文，不能改变唤醒词单独一段不创建任务的规则。
-- [用户确认] D-PAVP-029 · 2026-11-08 · 第一版暂不采用 AnifLive-TTS；优先选择可在本地运行的 TTS，接入现有 LLM，并先完成流式播放、首字延迟和可打断的最小闭环。原因：降低 Docker、TensorRT、显存和模型包对首版验证的阻塞，同时保持本地语音方向。影响：本地 TTS provider 需要通过现有 `shared-tts.v1` / `VoiceOutput` 接口接入；具体模型仍待选型和确认。
+- [用户确认] D-PAVP-029 · 2026-11-08 · 第一版暂不采用 AnifLive-TTS；优先选择可在本地运行的 TTS，接入现有 LLM，并先完成流式播放、首字延迟和可打断的最小闭环。状态：已被 D-PAVP-031 supersede；该决策的实现范围已转移到 Local Voice 独立插件，Phone Agent 原有功能和 provider 不变。原因：降低 Docker、TensorRT、显存和模型包对首版验证的阻塞，同时保持本地语音方向。
 - [用户确认] D-PAVP-030 · 2026-11-08 · 最小闭环继续保留唤醒词和主人声纹作为必经路径；ASR 第一版向用户显示完整最终文本；第一版只验收中文和 Windows 单设备。原因：保留现有语音准入安全边界，同时收窄首版验证范围。影响：不把流式中间 ASR 文本列入首版完成条件。
+- [用户确认] D-PAVP-031 · 2026-11-09 · 本地 TTS、中文 ASR 和类全双工最小闭环归属新建的 `local-voice/` 独立插件；Phone Agent 保留原有功能、配置、生命周期、UI 和音频 provider。原因：用户确认独立插件可以避免新闭环影响现有 Phone Agent。影响：Local Voice 拥有自己的 Host、Bridge、Python runtime、UI、测试和设备互斥检查。
 
 ## 开发状态
 
@@ -98,7 +99,7 @@
 - [代码证据] 新增 Node UI/Host 与 Python runtime 回归覆盖按钮绑定、命令消费、待应用/已应用计数和重启恢复；Python runtime 当前为 `99 passed, 12 subtests passed`，Node 全量测试当前为 `1713 passed, 1 skipped`。
 - [用户确认] 已确认专用语音测试中心的板块结构：麦克风与音频输入、唤醒词、ASR、主人声纹、TTS/扬声器和完整链路；ASR 第一版显示分段完成后的最终文本。
 - [代码证据] 已实现语音测试中心 Tab 与六个测试板块：麦克风输入、唤醒词、ASR、主人声纹、TTS/扬声器和完整链路；ASR 最终转写只在显式测试中心显示，完整链路测试不提交 Bot。
-- [候选建议] 本地 TTS MVP 优先验证 MeloTTS 中文模型；ASR 继续使用已接入的 FunASR Paraformer-zh 分段最终识别，Sherpa 唤醒和 CAM++ 主人声纹保持不变；CosyVoice2-0.5B 作为后续音色克隆和原生流式候选。
+- [候选建议] Local Voice 的本地 TTS MVP 优先验证 MeloTTS 中文模型；ASR 继续使用已接入的 FunASR Paraformer-zh 分段最终识别。Phone Agent 的 Sherpa 唤醒、CAM++ 主人声纹和现有 TTS provider 不因 Local Voice 创建而改变。
 - [代码证据] 已新增 ASR-only、TTS-only 和 full-chain dry-run 命令及回归；上一阶段 Python runtime 为 `105 passed, 12 subtests passed`，Node 全量为 `1717 passed, 1 skipped`。
 - [代码证据] 持续声纹测试改造后的验证结果为 Python runtime `106 passed, 12 subtests passed`，Node 全量 `1720 passed, 1 skipped`；客户端构建和 Python compileall 均通过。
 - [代码证据] 2026-11-08 停止旧的手动 Electron 进程后，通过 `start.ps1 -DataRoot .\\.ds-bot-local` 启动；最新 `.ds-bot-local/shell/logs/main.log` 记录 `team window shown (focused)`，未出现 20 秒 `ready()` 超时；Electron 子进程命令行使用 `.ds-bot-local\\shell` profile。

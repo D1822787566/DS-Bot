@@ -66,6 +66,7 @@
     "dshmarket": "1.73.11",
     "electron-updater": "6.8.10",
     "js-yaml": "4.3.2",
+    "local-voice": "file:../local-voice",
     "pnpm": "11.7.0",
     "ws": "8.18.3",
     "yaml": "2.9.1"

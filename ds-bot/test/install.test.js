@@ -55,6 +55,7 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: Phone Agent runtime defaults',
     'on session/event',
     'effect ds-bot: managed voice runtime',
+    'on session/event',
     'effect ds-bot: MOSS Live relay',
     'on tools/execute',
     'effect ds-bot: scoped team tools',
