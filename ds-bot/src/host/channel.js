@@ -218,6 +218,9 @@ export function install(rt) {
         case 'moss-live-voice-preview':
           await rt.load()
           return ok(await rt.mossLiveVoicePreview(body))
+        case 'moss-live-memory-save':
+          await rt.load()
+          return ok(await rt.mossLiveMemorySave(body))
         case 'moss-live-update':
           await rt.load()
           return ok(await rt.mossLiveUpdate(body))
@@ -229,7 +232,7 @@ export function install(rt) {
           return ok(await rt.mossLiveClearKey())
         case 'moss-live-start':
           await rt.load()
-          return ok(await rt.mossLiveStart())
+          return ok(await rt.mossLiveStart(body))
         case 'moss-live-stop':
           await rt.load()
           return ok(await rt.mossLiveStop())

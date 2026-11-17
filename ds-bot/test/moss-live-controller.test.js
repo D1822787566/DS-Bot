@@ -3,11 +3,12 @@ import { test } from 'node:test'
 import { createSource } from '../src/client/sources.js'
 
 import { createMossLiveController, bindMossLiveLifecycle } from '../src/client/moss-live-controller.js'
+import { transcriptEvent } from '../src/client/moss-live.js'
 const pending = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 function fixture(extra = {}) {
   assert.equal(typeof createMossLiveController, 'function', 'MOSS needs a page-independent session owner')
   const calls = [], sessions = []
-  const config = { enabled: true, greetingEnabled: false }
+  const config = { enabled: true, greetingEnabled: false, profiles: [{ id: 'profile-h', botId: 'bot-h', name: '华子', readHistory: true, submitTasks: true }], selectedProfileId: 'profile-h' }
   const actions = {
     mossLiveStop: async () => { calls.push('host-stop'); return { config: { ...config, enabled: false }, runtime: { state: 'stopped' } } },
     mossLiveStart: async () => { calls.push('host-start'); return { config, runtime: { port: 1234, token: 'test' } } },
@@ -90,6 +91,76 @@ test('hanging up keeps the bar and captions, while redial starts one fresh sessi
   assert.equal(controller.getSnapshot().visible, false)
 })
 
+test('hanging up persists the final timestamp on the current Profile recording', async () => {
+  const memoryCalls = []
+  const { controller, sessions, calls, config } = fixture({ actions: {
+    mossLiveMemorySave: async value => { memoryCalls.push(value); return { config } },
+  } })
+  await controller.start()
+  sessions[0].options.onTranscript({ kind: 'user', text: '把这一段记住', done: true })
+  await controller.stop()
+  assert.equal(memoryCalls.at(-1).profileId, 'profile-h')
+  assert.equal(memoryCalls.at(-1).transcript[0].text, '把这一段记住')
+  assert.ok(memoryCalls.at(-1).endedAt)
+  assert.equal(new Set(memoryCalls.map(value => value.recordId)).size, 1)
+  assert.ok(calls.includes('host-stop'))
+})
+
+test('starting a remembered Profile can explicitly begin a new context', async () => {
+  const startArgs = []
+  const { controller, config } = fixture({ actions: {
+    mossLiveStart: async body => { startArgs.push(body); return { config, runtime: { port: 1234, token: 'test' } } },
+  } })
+  await controller.start('profile-h', { resume: false })
+  assert.deepEqual(startArgs, [{ profileId: 'profile-h', resume: false }])
+})
+
+test('final captions checkpoint memory before hangup and media stop does not wait for disk storage', async () => {
+  const gate = pending(), memoryCalls = []
+  const { controller, sessions } = fixture({ actions: { mossLiveMemorySave: value => { memoryCalls.push(value); return gate.promise } } })
+  await controller.start('profile-h')
+  sessions[0].options.onTranscript({ kind: 'user', text: '本轮练习。', done: true })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(memoryCalls.length, 1)
+  const stopping = controller.stop()
+  assert.equal(sessions[0].stops, 1, 'hanging up must release the microphone before waiting for storage')
+  gate.resolve({ config: { profiles: [] } })
+  await stopping
+  assert.ok(memoryCalls[0].recordId)
+  assert.equal(new Set(memoryCalls.map(value => value.recordId)).size, 1)
+  await controller.dispose()
+})
+
+test('an empty interruption checkpoints the terminal caption without saving unspoken text', async () => {
+  const saved = []
+  const { controller, sessions } = fixture({ actions: { mossLiveMemorySave: async value => { saved.push(value); return { config: { profiles: [] } } } } })
+  await controller.start('profile-h')
+  const emit = sessions[0].options.onTranscript
+  emit(transcriptEvent('input.transcript.done', { turn: 'u1', text: '本轮问题' }))
+  emit(transcriptEvent('output.transcript.updated', { run_id: 'r1', turn_id: 't1', text: '还没有实际播出的回答' }))
+  emit(transcriptEvent('response.interrupted', { run_id: 'r1', turn_id: 't1', text: '' }))
+  emit(transcriptEvent('output.transcript.done', { run_id: 'r1', turn_id: 't1', text: '迟到的完整回答' }))
+  await controller.stop()
+  assert.equal(controller.getSnapshot().transcript.at(-1).done, true)
+  assert.equal(controller.getSnapshot().transcript.at(-1).text, '')
+  assert.doesNotMatch(JSON.stringify(saved.at(-1)), /还没有实际播出|迟到的完整/)
+  assert.equal(new Set(saved.map(value => value.recordId)).size, 1)
+  await controller.dispose()
+})
+
+test('a memory write error is visible and repeated hangup does not duplicate the call', async () => {
+  const memoryCalls = []
+  const { controller, sessions } = fixture({ actions: { mossLiveMemorySave: async value => { memoryCalls.push(value); throw new Error('disk full') } } })
+  await controller.start('profile-h')
+  sessions[0].options.onTranscript({ kind: 'assistant', text: '保留的对话。', done: true })
+  await controller.stop()
+  assert.match(controller.getSnapshot().memoryError, /保存/)
+  assert.equal(controller.getSnapshot().active, false)
+  await controller.stop()
+  assert.equal(new Set(memoryCalls.map(value => value.recordId)).size, 1)
+  await controller.dispose()
+})
+
 test('disabling the plugin during hangup hides the retained bar before cleanup finishes', async () => {
   const gate = pending()
   let ending = false
@@ -170,6 +241,67 @@ test('plugin disable and application teardown stop the owner, not navigation', a
   await release()
 })
 
+test('leaving the bound Bot page ends the MOSS call and releases its resources', async () => {
+  const { controller, sessions } = fixture()
+  const roster = createSource({ pluginsEnabled: true })
+  const page = createSource('bot-h')
+  const release = bindMossLiveLifecycle(controller, { roster, currentBotId: () => page.getSnapshot(), currentBotSource: page, events: new EventTarget() })
+  await controller.start()
+  page.set('bot-w')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sessions[0].stops, 1)
+  assert.equal(controller.getSnapshot().active, false)
+  await release()
+})
+
+test('a bound current Bot shows the idle MOSS sidebar before dialing', async () => {
+  const { controller, config } = fixture()
+  const roster = createSource({ pluginsEnabled: true })
+  const page = createSource('bot-h')
+  const release = bindMossLiveLifecycle(controller, {
+    roster,
+    currentBotId: () => page.getSnapshot(),
+    currentBotSource: page,
+    resolveBinding: async botId => config.profiles.find(profile => profile.botId === botId) ?? null,
+    events: new EventTarget(),
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  const state = controller.getSnapshot()
+  assert.equal(state.visible, true)
+  assert.equal(state.active, false)
+  assert.equal(state.boundBotId, 'bot-h')
+  assert.equal(state.boundProfile.id, 'profile-h')
+  page.set('bot-unbound')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(controller.getSnapshot().visible, false)
+  await release()
+})
+
+test('switching from one bound Bot to another ends the call and reveals the new idle Profile', async () => {
+  const { controller, sessions, config } = fixture()
+  config.profiles.push({ id: 'profile-w', botId: 'bot-w', name: '才子', readHistory: false, submitTasks: true })
+  const roster = createSource({ pluginsEnabled: true })
+  const page = createSource('bot-h')
+  const release = bindMossLiveLifecycle(controller, {
+    roster,
+    currentBotId: () => page.getSnapshot(),
+    currentBotSource: page,
+    resolveBinding: async botId => config.profiles.find(profile => profile.botId === botId) ?? null,
+    events: new EventTarget(),
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  await controller.start('profile-h')
+  page.set('bot-w')
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sessions[0].stops, 1)
+  assert.equal(controller.getSnapshot().visible, true)
+  assert.equal(controller.getSnapshot().active, false)
+  assert.equal(controller.getSnapshot().boundBotId, 'bot-w')
+  assert.equal(controller.getSnapshot().boundProfile.id, 'profile-w')
+  await release()
+})
+
 test('unexpected disconnect ends the timer, keeps an honest status, and cannot resume a greeting', async () => {
   const gate = pending()
   const { controller, sessions, config } = fixture({ greet: () => gate.promise })
@@ -186,5 +318,20 @@ test('unexpected disconnect ends the timer, keeps an honest status, and cannot r
   assert.equal(state.sessionState, 'closed')
   assert.ok(state.endedAt)
   assert.equal(sessions[0].micEnabled, false)
+  await controller.dispose()
+})
+
+test('unexpected disconnect also preserves the finished transcript in Profile memory', async () => {
+  const memoryCalls = []
+  const { controller, sessions } = fixture({ actions: {
+    mossLiveMemorySave: async value => { memoryCalls.push(value); return { config: { profiles: [] } } },
+  } })
+  await controller.start()
+  sessions[0].options.onTranscript({ kind: 'assistant', text: '这段结果也要保留。', done: true })
+  sessions[0].options.onState('closed')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(memoryCalls.at(-1).transcript[0].text, /保留/)
+  assert.ok(memoryCalls.at(-1).endedAt)
+  assert.equal(new Set(memoryCalls.map(value => value.recordId)).size, 1)
   await controller.dispose()
 })

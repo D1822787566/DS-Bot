@@ -13,6 +13,7 @@ function channel(t, { apiKey = 'test-moss-key', fetchImpl } = {}) {
       connection: { fetch: { register(value) { route = value } } },
     },
     load: async () => {},
+    save: async () => {},
     refresh: async () => {},
     readOnly: () => undefined,
     secretValue: () => apiKey,
@@ -69,4 +70,21 @@ test('the MOSS voice endpoints report a missing key without making an upstream r
     assert.equal(result.error.code, 'bot/refused')
     assert.match(result.error.message, /API Key is not configured/)
   }
+})
+
+test('the MOSS memory endpoint stores a bounded Profile transcript through the client channel', async t => {
+  const call = channel(t, { apiKey: '' })
+  const config = {
+    profiles: [{ id: 'profile-h', botId: 'bot-h', name: '华子', readHistory: true, submitTasks: false }],
+    selectedProfileId: 'profile-h',
+  }
+  await call('moss-live-update', { config })
+  const result = await call('moss-live-memory-save', {
+    profileId: 'profile-h',
+    startedAt: '2026-11-14T09:00:00.000Z',
+    endedAt: '2026-11-14T09:10:00.000Z',
+    transcript: [{ kind: 'user', text: '继续练习。' }],
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.config.profiles[0].memory.turns[0].items[0].text, '继续练习。')
 })

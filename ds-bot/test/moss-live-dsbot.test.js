@@ -4,7 +4,8 @@ import * as moss from '../src/host/moss-live.js'
 
 function setup(options = {}) {
   assert.equal(typeof moss.MossDsBotBridge, 'function', 'MOSS must provide its scoped DS Bot bridge')
-  const config = moss.normalizeMossLiveConfig({ dsBot: { enabled: true, bots: [
+  const profileBot = options.profileBot ?? 'chief'
+  const config = moss.normalizeMossLiveConfig({ profiles: [{ id: `profile-${profileBot}`, botId: profileBot, name: profileBot, readHistory: true, submitTasks: true }], selectedProfileId: `profile-${profileBot}`, dsBot: { enabled: true, bots: [
     { botId: 'chief', readHistory: true, submitTasks: true },
     { botId: 'writer', readHistory: false, submitTasks: true },
   ] } })
@@ -55,10 +56,24 @@ test('MOSS DS Bot access persists independent grants and remains disabled by def
   ])
 })
 
+test('MOSS Profile view keeps every Bot visible and marks deleted bindings unavailable', () => {
+  const config = moss.normalizeMossLiveConfig({ profiles: [
+    { id: 'profile-chief', botId: 'chief', name: 'Chief voice', readHistory: true, submitTasks: false },
+    { id: 'profile-gone', botId: 'gone', name: 'Gone voice', readHistory: false, submitTasks: true },
+  ] })
+  const bridge = new moss.MossDsBotBridge({ state: { bots: { chief: { id: 'chief', name: 'Chief' } }, prefs: { mossLive: config } }, botOf: id => id === 'chief' ? { id, name: 'Chief' } : undefined })
+  const view = bridge.view()
+  assert.deepEqual(JSON.parse(JSON.stringify(view.profiles)), config.profiles)
+  assert.equal(view.bots.find(bot => bot.id === 'chief').name, 'Chief')
+  assert.equal(view.bots.find(bot => bot.id === 'gone').unavailable, true)
+})
+
 test('MOSS tool configuration comes from Host and executes only after configuration succeeds', async () => {
   const s = setup()
   const session = s.bridge.sessionUpdate({ instructions: '简洁回答', tools: [{ name: 'delete_everything' }] })
   assert.deepEqual(session.tools.map(tool => tool.name), ['dsbot_list_bots', 'dsbot_read_context', 'dsbot_submit_task', 'dsbot_task_status'])
+  assert.equal(session.tools.find(tool => tool.name === 'dsbot_read_context').read_only, true)
+  assert.equal(session.tools.find(tool => tool.name === 'dsbot_submit_task').read_only, false)
   assert.match(session.instructions, /明确/)
   await s.call('dsbot_submit_task', { bot_id: 'chief', text: '整理待办' })
   assert.equal(s.prompts.length, 0)
@@ -67,7 +82,7 @@ test('MOSS tool configuration comes from Host and executes only after configurat
   assert.equal(s.prompts.length, 0)
   await s.ready()
   await s.call('dsbot_list_bots', {}, 'roster')
-  assert.deepEqual(s.result('roster').bots.map(bot => bot.id), ['chief', 'writer'])
+  assert.deepEqual(s.result('roster').bots.map(bot => bot.id), ['chief'])
   assert.doesNotMatch(JSON.stringify(s.result('roster')), /hidden system prompt|Closed/)
 })
 
@@ -95,7 +110,7 @@ test('revoking access while reading prevents the excerpt from reaching MOSS', as
   await s.ready()
   const pending = s.call('dsbot_read_context', { bot_id: 'chief' })
   while (!finish) await new Promise(resolve => setImmediate(resolve))
-  s.config.dsBot.bots[0].readHistory = false
+  s.config.profiles[0].readHistory = false
   finish({ rows: [{ text: 'private excerpt', session: 'chief-chat', seq: 1, time: 1, part: 1 }] })
   await pending
   assert.equal(s.result('call-1').error.code, 'access_denied')
@@ -103,7 +118,7 @@ test('revoking access while reading prevents the excerpt from reaching MOSS', as
 })
 
 test('task admission queues once and resumes MOSS only after the exact result acknowledgement', async () => {
-  const s = setup()
+  const s = setup({ profileBot: 'writer' })
   await s.ready()
   await s.call('dsbot_submit_task', { bot_id: 'writer', text: '整理待办', context: '会议约定周五发布' }, 'submit', { task_id: 'remote-task', revision: 1 })
   await s.bridge.receive({ action: 'response.done', data: { response: { output: [{ type: 'function_call', call_id: 'submit', name: 'dsbot_submit_task', arguments: JSON.stringify({ bot_id: 'writer', text: '整理待办', context: '会议约定周五发布' }) }] } } })
@@ -208,23 +223,46 @@ test('task receipts use the status tool field and scoped MOSS task ids resolve t
   assert.equal(s.result('new-session-status').error.code, 'unknown_task')
 })
 
-test('completed task facts are acknowledged before asking MOSS to report the result', async () => {
+test('completed task result is sent for speech while factual context is acknowledged separately', async () => {
   const s = setup({ ackThinking: false }); await s.ready()
   await s.call('dsbot_submit_task', { bot_id: 'chief', text: '查询天气' }); await s.ack('call-1')
   consumed(s); answered(s, '珠海晴，二十五摄氏度')
   const facts = s.sent.find(value => value.action === 'session.thinking.append')
   assert.ok(facts, 'the actual result must enter factual context')
   assert.match(facts.content, /二十五/)
-  assert.equal(s.sent.some(value => value.action === 'session.commentary.append'), false)
+  const commentary = s.sent.find(value => value.action === 'session.commentary.append')
+  assert.ok(commentary, 'the actual result must be sent for immediate speech while the user is silent')
+  assert.match(commentary.content, /二十五/)
   await s.bridge.receive({ action: 'session.thinking.appended', data: { client_event_id: facts.event_id } })
   assert.equal(s.sent.filter(value => value.action === 'session.commentary.append').length, 1)
   await s.bridge.receive({ action: 'session.thinking.appended', data: { client_event_id: facts.event_id } })
   assert.equal(s.sent.filter(value => value.action === 'session.commentary.append').length, 1)
 })
 
+test('task result is delivered to the still-open MOSS session without another user turn', async () => {
+  const s = setup({ ackThinking: false }); await s.ready()
+  await s.call('dsbot_submit_task', { bot_id: 'chief', text: '整理待办' }); await s.ack('call-1')
+  consumed(s)
+  answered(s, '待办已整理')
+  const commentary = s.sent.find(value => value.action === 'session.commentary.append')
+  assert.equal(commentary?.status, 'completed')
+  assert.match(commentary?.content ?? '', /待办已整理/)
+})
+
+test('idle time does not retire the original task delivery binding', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+  const s = setup(); await s.ready()
+  await s.call('dsbot_submit_task', { bot_id: 'chief', text: '生成结果' }); await s.ack('call-1')
+  consumed(s)
+  t.mock.timers.tick(180_000)
+  answered(s, '等待三分钟后的实际结果')
+  assert.equal(s.prompts.length, 1)
+  assert.match(s.sent.find(item => item.action === 'session.commentary.append')?.content ?? '', /等待三分钟后的实际结果/)
+})
+
 test('permissions are checked after capability setup and interpretation exposes no tools', async () => {
   const s = setup(); await s.ready()
-  s.rt.ensureCapabilities = async () => { s.config.dsBot.bots[0].submitTasks = false }
+  s.rt.ensureCapabilities = async () => { s.config.profiles[0].submitTasks = false }
   await s.call('dsbot_submit_task', { bot_id: 'chief', text: '整理待办' })
   assert.equal(s.prompts.length, 0)
   assert.equal(s.result('call-1').error.code, 'access_denied')
@@ -255,7 +293,7 @@ test('revocation while admitting a task suppresses its receipt and any later MOS
   const pending = s.call('dsbot_submit_task', { bot_id: 'chief', text: '整理待办' })
   while (!finish) await new Promise(resolve => setImmediate(resolve))
   assert.equal(s.bridge.view().tasks[0].status, 'submitting')
-  s.config.dsBot.bots[0].submitTasks = false
+  s.config.profiles[0].submitTasks = false
   finish(); await pending
   assert.equal(s.result('call-1').error.code, 'access_denied')
   await s.ack('call-1')

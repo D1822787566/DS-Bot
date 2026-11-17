@@ -165,6 +165,21 @@ test('MOSS Live waits for voice change and media configuration before becoming r
   assert.equal(session.state, 'ready')
 })
 
+test('MOSS Live session uses the voice configured by the selected Profile', () => {
+  const sent = []
+  const session = new MossLiveSession({ config: {
+    voiceName: 'legacy-voice',
+    selectedProfileId: 'profile-c',
+    profiles: [
+      { id: 'profile-h', botId: 'bot-h', voiceName: 'voice-h' },
+      { id: 'profile-c', botId: 'bot-c', voiceName: 'voice-c' },
+    ],
+  } })
+  session.ws = { readyState: 1, send: value => sent.push(JSON.parse(value)) }
+  session.handleJson(JSON.stringify({ action: 'session_attached', data: {} }))
+  assert.deepEqual(sent, [{ action: 'change_voice', voice_name: 'voice-c' }])
+})
+
 test('MOSS Live interpretation sessions skip conversational session.update', () => {
   const sent = []
   const session = new MossLiveSession({ config: { mode: 'interpret', mediaProfile: 'standard', videoMaxLongSide: 1024, videoJpegQuality: .72, videoIntervalMs: 1000 } })
@@ -324,6 +339,20 @@ test('playback completion waits for audio.done and actual local playback, once p
   assert.deepEqual(sent.at(-1), { action: 'playback.completed', run_id: 'r2', turn_id: 't2' })
 })
 
+test('malformed proactive audio never sends receipts with missing reply or chunk identifiers', () => {
+  const session = new MossLiveSession()
+  const sent = []
+  session.ws = { readyState: 1, send: raw => sent.push(JSON.parse(raw)) }
+  const item = { info: { runId: 'task-result-run', turnId: '', chunkId: '' } }
+  session.player.items.add(item)
+  session.handleJson(JSON.stringify({ action: 'response.audio.done', data: { run_id: 'task-result-run', turn_id: '' } }))
+  session.player.items.delete(item)
+  session.playbackChunkDone(item)
+  session.player.onDrain()
+  session.handleJson(JSON.stringify({ action: 'response.audio.stop', data: { run_id: 'task-result-run', turn_id: '', reason: 'playback_timeout' } }))
+  assert.deepEqual(sent, [])
+})
+
 test('recoverable MOSS request errors leave a ready voice session available', () => {
   const session = new MossLiveSession()
   session.state = 'ready'; session.mediaReady = true
@@ -448,4 +477,179 @@ test('MOSS Live audio player resumes a suspended browser context before playback
   await Promise.resolve()
   assert.equal(player.ctx.resumeCount, 1)
   await player.close()
+})
+
+function playbackSession(t) {
+  const sent = [], events = []
+  let transcript = []
+  const clock = {
+    state: 'running', currentTime: 0, destination: {},
+    createGain: () => ({ gain: {}, connect() {} }),
+    createAnalyser: () => ({ frequencyBinCount: 16, connect() {}, getByteTimeDomainData: values => values.fill(128) }),
+    createBuffer: (_, length, rate) => ({ duration: length / rate, getChannelData: () => new Float32Array(length) }),
+    createBufferSource: () => ({ stops: 0, connect() {}, start(at) { this.startAt = at }, stop() { this.stops++ } }),
+    async close() {},
+  }
+  const session = new MossLiveSession({
+    onEvent: event => events.push(event),
+    onTranscript: item => { transcript = mergeTranscriptEvent(transcript, item) },
+  })
+  session.player.contextFactory = () => clock
+  session.ws = { readyState: 1, send: raw => sent.push(JSON.parse(raw)), close() {} }
+  const event = (action, data) => session.handleJson(JSON.stringify({ action, data }))
+  const audio = (run, turn, chunk, duration = 1) => {
+    event('response.audio.context', { run_id: run, turn_id: turn, chunk_id: chunk })
+    session.handleBinary(new Int16Array(Math.round(duration * 48000)).buffer)
+    return [...session.player.items].at(-1)
+  }
+  t.after(() => session.stop())
+  return { session, clock, sent, events, event, audio, transcript: () => transcript }
+}
+
+test('an interrupted reply stops playback while input recognition alone keeps full duplex audio', t => {
+  const s = playbackSession(t)
+  s.event('response.audio.started', { run_id: 'r1', turn_id: 't1' })
+  const item = s.audio('r1', 't1', 'c1')
+  s.event('input.speech.started', {})
+  assert.equal(item.source.stops, 0)
+  s.clock.currentTime = .4
+  s.event('response.interrupted', { run_id: 'r1', turn_id: 't1', text: '已播放部分' })
+  assert.equal(item.source.stops, 1)
+  assert.equal(s.session.player.items.size, 0)
+  assert.notEqual(s.session.state, 'speaking')
+  assert.deepEqual(s.sent, [{ action: 'playback.stopped', run_id: 'r1', turn_id: 't1', played_audio_ms: 320 }])
+})
+
+for (const action of ['response.audio.stop', 'response.interrupted']) {
+  test(`${action} preserves another reply and reschedules it after the cancelled audio`, t => {
+    const s = playbackSession(t)
+    s.event('response.audio.started', { run_id: 'old', turn_id: 't1' })
+    const old = s.audio('old', 't1', 'c1', 2)
+    s.event('response.audio.started', { run_id: 'new', turn_id: 't2' })
+    const next = s.audio('new', 't2', 'c2')
+    s.clock.currentTime = .4
+    const obsoleteSource = next.source
+    s.event(action, { run_id: 'old', turn_id: 't1', text: '旧回复' })
+    assert.equal(old.source.stops, 1)
+    assert.deepEqual([...s.session.player.items], [next])
+    assert.ok(next.source.startAt <= .481, 'the next reply must not wait for the cancelled two seconds')
+    assert.equal(s.session.state, 'speaking')
+    obsoleteSource.onended()
+    assert.equal(s.session.player.items.size, 1, 'the obsolete schedule callback cannot complete the replacement source')
+    assert.equal(s.sent.some(value => value.run_id === 'new'), false)
+  })
+}
+
+for (const order of [['response.audio.stop', 'response.interrupted'], ['response.interrupted', 'response.audio.stop']]) {
+  test(`stop receipts are idempotent for ${order.join(' then ')}`, t => {
+    const s = playbackSession(t)
+    const item = s.audio('r1', 't1', 'c1')
+    for (const action of [...order, ...order]) s.event(action, { run_id: 'r1', turn_id: 't1', text: '已播部分' })
+    item.source.onended()
+    s.event('response.audio.done', { run_id: 'r1', turn_id: 't1' })
+    assert.equal(s.sent.filter(value => value.action === 'playback.stopped').length, 1)
+    assert.equal(s.sent.some(value => value.action === 'playback.completed' || value.action === 'playback.chunk.completed'), false)
+  })
+}
+
+test('late audio and generation events cannot revive an interrupted reply', t => {
+  const s = playbackSession(t)
+  s.audio('old', 't1', 'c1')
+  s.event('response.interrupted', { run_id: 'old', turn_id: 't1', text: '已播部分' })
+  s.event('response.audio.started', { run_id: 'old', turn_id: 't1' })
+  s.audio('old', 't1', 'late')
+  s.event('response.audio.done', { run_id: 'old', turn_id: 't1' })
+  s.event('output.transcript.done', { run_id: 'old', turn_id: 't1', text: '不应复活的完整回复' })
+  assert.equal(s.session.player.items.size, 0)
+  assert.notEqual(s.session.state, 'speaking')
+  assert.equal(s.transcript().at(-1).text, '已播部分')
+  s.event('response.audio.started', { run_id: 'new', turn_id: 't2' })
+  const next = s.audio('new', 't2', 'new')
+  assert.equal(next.info.runId, 'new')
+  assert.equal(s.session.player.items.size, 1)
+})
+
+test('stopping between context and binary consumes the old frame without mislabelling the next reply', t => {
+  const s = playbackSession(t)
+  s.event('response.audio.context', { run_id: 'old', turn_id: 't1', chunk_id: 'c1' })
+  s.event('response.audio.stop', { run_id: 'old', turn_id: 't1' })
+  s.session.handleBinary(new Int16Array(160).buffer)
+  assert.equal(s.session.player.items.size, 0)
+  const next = s.audio('new', 't2', 'c2')
+  assert.equal(next.info.runId, 'new')
+  assert.equal(s.session.player.items.size, 1)
+})
+
+test('optional interruption identifiers resolve only an unambiguous known reply', t => {
+  const s = playbackSession(t)
+  s.event('output.transcript.updated', { run_id: 'r1', turn_id: 't1', text: '未完的回复' })
+  s.audio('r1', 't1', 'c1')
+  s.event('response.interrupted', { run_id: 'r1', text: '已播部分' })
+  assert.equal(s.session.player.items.size, 0)
+  assert.equal(s.transcript().length, 1)
+  assert.equal(s.transcript()[0].done, true)
+  assert.equal(s.transcript()[0].text, '已播部分')
+  s.audio('shared', 't2', 'c2')
+  s.audio('shared', 't3', 'c3')
+  s.event('response.interrupted', { run_id: 'shared', text: '目标不明确' })
+  assert.equal(s.session.player.items.size, 2)
+  assert.equal(s.events.at(-1).type, 'ui.playback_unmatched')
+  assert.equal(s.sent.some(value => value.run_id === 'shared'), false)
+})
+
+test('empty interruption identifiers are treated as missing when run id identifies one reply', t => {
+  const s = playbackSession(t)
+  s.audio('r1', 't1', 'c1')
+  s.event('response.audio.stop', { run_id: 'r1', turn_id: '', reason: 'barge-in' })
+  assert.equal(s.session.player.items.size, 0)
+  assert.deepEqual(s.sent, [{ action: 'playback.stopped', run_id: 'r1', turn_id: 't1', played_audio_ms: 0 }])
+})
+
+test('a stop confirms elapsed chunks before reporting only the unfinished head progress', t => {
+  const s = playbackSession(t)
+  s.audio('r1', 't1', 'finished', .2)
+  s.audio('r1', 't1', 'partial', .2)
+  s.audio('r1', 't1', 'queued', .4)
+  s.clock.currentTime = .37
+  s.event('response.audio.stop', { run_id: 'r1', turn_id: 't1' })
+  assert.deepEqual(s.sent, [
+    { action: 'playback.chunk.completed', run_id: 'r1', turn_id: 't1', chunk_id: 'finished' },
+    { action: 'playback.stopped', run_id: 'r1', turn_id: 't1', played_audio_ms: 90 },
+  ])
+})
+
+test('chunk playback callbacks acknowledge each chunk only once', t => {
+  const s = playbackSession(t)
+  const item = s.audio('r1', 't1', 'c1')
+  s.clock.currentTime = item.endAt
+  item.source.onended()
+  item.source.onended()
+  s.session.playbackChunkDone(item)
+  s.event('response.audio.done', { run_id: 'r1', turn_id: 't1' })
+  assert.equal(s.sent.filter(value => value.action === 'playback.chunk.completed').length, 1)
+  assert.equal(s.sent.filter(value => value.action === 'playback.completed').length, 1)
+})
+
+test('closing a call never acknowledges drained audio or retains old reply records', async t => {
+  const s = playbackSession(t)
+  const item = s.audio('r1', 't1', 'c1')
+  s.clock.currentTime = item.endAt + .1
+  await s.session.stop()
+  item.source.onended()
+  s.event('response.audio.started', { run_id: 'r1', turn_id: 't1' })
+  assert.deepEqual(s.sent, [])
+  assert.equal(s.session.playbackReplies.size, 0)
+  assert.equal(s.session.state, 'stopped')
+})
+
+test('empty interrupted captions finish the existing row without reviving unplayed text', () => {
+  let items = mergeTranscriptEvent([], transcriptEvent('output.transcript.updated', { run_id: 'r1', turn_id: 't1', text: '尚未确认播放的内容' }))
+  items = mergeTranscriptEvent(items, transcriptEvent('response.interrupted', { run_id: 'r1', turn_id: 't1', text: '' }))
+  assert.equal(items.length, 1)
+  assert.equal(items[0].done, true)
+  assert.equal(items[0].interrupted, true)
+  assert.equal(items[0].text, '')
+  items = mergeTranscriptEvent(items, transcriptEvent('output.transcript.done', { run_id: 'r1', turn_id: 't1', text: '旧完整内容' }))
+  assert.equal(items[0].text, '')
+  assert.equal(mergeTranscriptEvent([], transcriptEvent('response.interrupted', { run_id: 'unknown', turn_id: 'unknown', text: '' })).length, 0)
 })

@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  低保真方向 A：字幕剧场。
+  假设：用户需要把当前语音内容当成主要阅读对象；Bot 与 MOSS 的配对必须一直可见。
+  这里只演示视觉层级和下一句推进，不连接真实通话。
+-->
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>A · 字幕剧场</title><link rel="stylesheet" href="prototype.css"></head>
+<body>
+  <header class="preview-header"><strong>A · 字幕剧场</strong><p>当前句最大，前后句保留上下文</p><nav class="direction-links"><a href="a-stage-theatre.html" aria-current="page">A</a><a href="b-lyrics-ribbon.html">B</a><a href="c-dual-pane.html">C</a><a href="index.html">总览</a></nav></header>
+  <div class="prototype-shell">
+    <aside class="sidebar"><div class="sidebar-heading"><strong>Bot</strong><span>3 个</span></div><button class="bot-row active"><span class="bot-avatar">英</span><span class="bot-row-copy"><b>英语教练</b><small>MOSS · 通话中</small></span><i class="moss-dot live"></i></button><button class="bot-row"><span class="bot-avatar">面</span><span class="bot-row-copy"><b>面试教练</b><small>MOSS · 已挂断</small></span><i class="moss-dot ended"></i></button><button class="bot-row"><span class="bot-avatar">日</span><span class="bot-row-copy"><b>日常助理</b><small>MOSS · 未开始</small></span><i class="moss-dot"></i></button><p class="sidebar-note">Bot 是长期身份。<br>MOSS 是它的语音入口。</p></aside>
+    <main class="main"><div class="main-heading"><div><h1>英语教练</h1><p>绑定 MOSS：英语陪练 · 正在通话</p></div><div class="heading-tools"><span class="pair-chip"><span class="orb"></span>英语陪练</span><button class="quiet-button">切换 Profile</button></div></div>
+      <div class="stage-scroll"><div class="stage-wrap"><h2>实时字幕</h2><p class="lead">把对话当成一块可阅读的舞台。当前句突出显示，上一句和下一句帮助你跟上节奏。</p><div class="demo-row"><span>原型操作</span><button data-next>演示下一句</button><button data-end>结束通话</button></div>
+        <section class="stage-card" aria-label="实时字幕舞台"><div class="stage-card-top"><span class="stage-status"><i></i><span data-status>正在听你说</span></span><small>英语陪练 · 00:12</small></div><div class="stage-lines"><div class="stage-line previous"><span class="speaker">MOSS</span><span data-prev>Great. Let's make it a little more natural.</span></div><div class="stage-line current"><span class="speaker">MOSS</span><span data-current>Try saying the whole sentence one more time.</span></div><div class="stage-line next"><span class="speaker">你</span><span data-next-line>好的，我再说一次。</span></div></div><div class="stage-progress"><span>00:12</span><span class="stage-progress-track"><i></i></span><span>实时</span></div></section>
+        <p class="concept-note">方向 A 的重点是“看字幕”。通话条仍保留控制，但不再承担主要阅读任务。</p>
+      </div></div>
+      <div class="call-bar"><span class="orb"></span><div class="call-copy"><b>英语陪练</b><small>绑定 Bot：英语教练</small></div><div class="call-middle"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span>实时字幕舞台已打开</span></div><div class="call-actions"><button>静音</button><button>返回 MOSS</button><button class="end">挂断</button></div></div>
+    </main>
+  </div>
+  <script>
+    const lines=[['Good. Now try the complete sentence.','Try saying the whole sentence one more time.','好的，我再说一次。'],['Try slowing down just a little at the end.','That sounds much clearer now.','我明白了，最后几个词放慢一点。'],['That is the rhythm we want.','Would you like to try it without looking?','好，我再试一次。']]; let index=0;
+    document.querySelector('[data-next]').onclick=()=>{ index=(index+1)%lines.length; const [a,b,c]=lines[index]; document.querySelector('[data-prev]').textContent=a; document.querySelector('[data-current]').textContent=b; document.querySelector('[data-next-line]').textContent=c; };
+    document.querySelector('[data-end]').onclick=()=>{ document.querySelector('[data-status]').textContent='已挂断'; document.querySelector('.stage-status').style.color='var(--red)'; };
+  </script>
+</body></html>

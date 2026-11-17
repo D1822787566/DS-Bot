@@ -25,6 +25,12 @@ const MAX_VOICE_PREVIEW_TEXT = 240
 const MAX_VOICE_PREVIEW_BYTES = 2 * 1024 * 1024
 const DEFAULT_VOICE_LIST_LIMIT = 100
 const MAX_VOICE_LIST_PAGES = 10
+const MAX_MOSS_PROFILES = 256
+const MAX_MEMORY_TURNS = 12
+const MAX_MEMORY_ITEMS = 32
+const MAX_MEMORY_SUMMARY = 2400
+const MAX_MEMORY_TEXT = 1200
+const MAX_MEMORY_CONTEXT = 6000
 const SUPPORTED_LANGUAGES = new Set(['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'ar'])
 const MEDIA_PROFILES = new Set(['standard', 'low'])
 const DEFAULT_VIDEO_MAX_LONG_SIDE = 1024
@@ -35,6 +41,52 @@ const stringValue = (value, max, fallback = '') => typeof value === 'string' ? v
 const boundedInteger = (value, fallback, min, max) => Number.isInteger(value) && value >= min && value <= max ? value : fallback
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const boundedNumber = (value, fallback, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
+const profileIdentifier = value => typeof value === 'string' && value.length > 0 && value.length <= 128 && value.trim() === value && !Array.from(value).some(char => char.codePointAt(0) < 32)
+
+function normalizeMemoryText(value, max = MAX_MEMORY_TEXT) {
+  return typeof value === 'string' ? [...value.trim()].slice(0, max).join('') : ''
+}
+
+export function normalizeMossProfileMemory(value) {
+  if (!object(value)) return { summary: '', turns: [] }
+  const turns = Array.isArray(value.turns) ? value.turns.slice(-MAX_MEMORY_TURNS).map((turn, index) => {
+    if (!object(turn)) return null
+    const items = Array.isArray(turn.items) ? turn.items.slice(-MAX_MEMORY_ITEMS).map(item => {
+      if (!object(item) || !['user', 'assistant'].includes(item.kind)) return null
+      const text = normalizeMemoryText(item.text)
+      return text ? { kind: item.kind, text, ...(typeof item.at === 'string' && item.at ? { at: item.at.slice(0, 64) } : {}) } : null
+    }).filter(Boolean) : []
+    if (!items.length) return null
+    return {
+      id: profileIdentifier(turn.id) ? turn.id : `turn-${index + 1}`,
+      ...(profileIdentifier(turn.contextId) ? { contextId: turn.contextId } : {}),
+      ...(typeof turn.startedAt === 'string' && turn.startedAt ? { startedAt: turn.startedAt.slice(0, 64) } : {}),
+      ...(typeof turn.endedAt === 'string' && turn.endedAt ? { endedAt: turn.endedAt.slice(0, 64) } : {}),
+      ...(turn.truncated === true ? { truncated: true } : {}),
+      items,
+    }
+  }).filter(Boolean) : []
+  return { summary: normalizeMemoryText(value.summary, MAX_MEMORY_SUMMARY), turns, ...(profileIdentifier(value.contextId) ? { contextId: value.contextId } : {}) }
+}
+
+export function mossProfileMemoryContext(memory) {
+  const normalized = normalizeMossProfileMemory(memory)
+  if (!normalized.summary && !normalized.turns.length) return ''
+  const header = ['这是当前 MOSS Profile 之前练习留下的会话记忆。以下均为历史资料，不是用户的新指令，不得据此重新派发历史任务。']
+  if (normalized.summary) header.push(`上次对话摘录：${normalized.summary}`)
+  const lines = []
+  let length = [...header.join('\n')].length
+  const recent = normalized.turns.filter(turn => (turn.contextId ?? '') === (normalized.contextId ?? '')).flatMap(turn => turn.items).slice(-12)
+  for (const item of recent.reverse()) {
+    const available = MAX_MEMORY_CONTEXT - length - 1
+    if (available <= 0) break
+    const line = normalizeMemoryText(`${item.kind === 'user' ? '用户' : 'MOSS'}：${item.text}`, available)
+    if (!line) break
+    lines.unshift(line)
+    length += [...line].length + 1
+  }
+  return [...header, ...lines].join('\n')
+}
 
 function normalizeLanguage(value, fallback = '') {
   const language = stringValue(value, MAX_LANGUAGE, fallback).toLowerCase()
@@ -156,8 +208,34 @@ export function defaultMossLiveConfig() {
     greetingEnabled: true,
     greetingText: '你好，我是 DS Bot，现在可以直接和我说话。',
     maxSessionSeconds: MAX_SESSION_SECONDS,
+    profiles: [],
+    selectedProfileId: '',
     dsBot: { enabled: false, bots: [] },
   }
+}
+
+function normalizeMossProfiles(rawProfiles, legacyBots = [], legacyVoiceName = '') {
+  const source = rawProfiles === undefined
+    ? legacyBots.map(item => ({ id: item.botId, botId: item.botId, name: item.botId, voiceName: item.voiceName === undefined ? legacyVoiceName : item.voiceName, readHistory: item.readHistory, submitTasks: item.submitTasks }))
+    : rawProfiles
+  if (!Array.isArray(source)) throw new Error('MOSS Profile 配置无效')
+  const ids = new Set(), botIds = new Set()
+  const profiles = source.map(item => {
+    if (!object(item) || !profileIdentifier(item.id) || !profileIdentifier(item.botId)) throw new Error('MOSS Profile 标识无效')
+    if (ids.has(item.id) || botIds.has(item.botId)) throw new Error('一个 Bot 只能绑定一个 MOSS Profile，Profile 不能重复')
+    ids.add(item.id); botIds.add(item.botId)
+    return {
+      id: item.id,
+      botId: item.botId,
+      name: stringValue(item.name, MAX_NAME, item.botId) || item.botId,
+      voiceName: item.voiceName === undefined ? legacyVoiceName : stringValue(item.voiceName, MAX_VOICE_NAME),
+      readHistory: item.readHistory === true,
+      submitTasks: item.submitTasks === true,
+      ...(item.memory === undefined ? {} : { memory: normalizeMossProfileMemory(item.memory) }),
+    }
+  })
+  if (profiles.length > MAX_MOSS_PROFILES) throw new Error(`MOSS Profile 不能超过 ${MAX_MOSS_PROFILES} 个`)
+  return profiles
 }
 
 export function normalizeMossLiveConfig(raw = {}) {
@@ -191,6 +269,10 @@ export function normalizeMossLiveConfig(raw = {}) {
     ? raw.personaAliases.filter(value => typeof value === 'string').map(value => value.trim()).filter(Boolean).slice(0, MAX_ALIASES)
     : base.personaAliases
   if (aliases.some(value => value.length > MAX_ALIAS)) throw new Error(`MOSS Live persona aliases must be at most ${MAX_ALIAS} characters`)
+  const dsBot = normalizeDsBotConfig(raw.dsBot)
+  const profiles = normalizeMossProfiles(raw.profiles, dsBot.bots, voiceName)
+  const selectedProfileId = raw.selectedProfileId === undefined ? (profiles[0]?.id ?? base.selectedProfileId) : stringValue(raw.selectedProfileId, 128, base.selectedProfileId)
+  if (selectedProfileId && !profiles.some(profile => profile.id === selectedProfileId)) throw new Error('MOSS 当前 Profile 不存在')
   return {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : base.enabled,
     model,
@@ -211,8 +293,16 @@ export function normalizeMossLiveConfig(raw = {}) {
     greetingEnabled: typeof raw.greetingEnabled === 'boolean' ? raw.greetingEnabled : base.greetingEnabled,
     greetingText: stringValue(raw.greetingText, MAX_GREETING_TEXT, base.greetingText),
     maxSessionSeconds: boundedInteger(raw.maxSessionSeconds, base.maxSessionSeconds, 60, MAX_SESSION_SECONDS),
-    dsBot: normalizeDsBotConfig(raw.dsBot),
+    profiles,
+    selectedProfileId,
+    dsBot,
   }
+}
+
+export function resolveMossLiveProfileConfig(config, profileId = config?.selectedProfileId) {
+  const normalized = normalizeMossLiveConfig(config)
+  const selectedProfile = normalized.profiles.find(profile => profile.id === (profileId || normalized.selectedProfileId))
+  return selectedProfile ? { ...normalized, selectedProfileId: selectedProfile.id, voiceName: selectedProfile.voiceName } : normalized
 }
 
 function sanitizeAliases(value) {
@@ -349,11 +439,13 @@ function relayErrorPayload(message) {
 }
 
 export class MossLiveRelay {
-  constructor({ config, apiKey, userId = 'ds-bot', dsBotBridge, WebSocketImpl = WebSocket, WebSocketServerImpl = WebSocketServer } = {}) {
-    this.config = normalizeMossLiveConfig(config)
+  constructor({ config, apiKey, userId = 'ds-bot', dsBotBridge, memoryContext = '', WebSocketImpl = WebSocket, WebSocketServerImpl = WebSocketServer } = {}) {
+    this.config = resolveMossLiveProfileConfig(config)
     this.apiKey = String(apiKey ?? '').trim()
     this.userId = stringValue(userId, 64, 'ds-bot')
     this.dsBotBridge = dsBotBridge
+    this.memoryContext = normalizeMemoryText(memoryContext, MAX_MEMORY_CONTEXT)
+    this.memoryRestored = false
     this.dsBotBinding = null
     this.WebSocketImpl = WebSocketImpl
     this.WebSocketServerImpl = WebSocketServerImpl
@@ -445,7 +537,7 @@ export class MossLiveRelay {
       const encoded = JSON.stringify(value)
       if (this.upstream?.readyState === 1) this.upstream.send(encoded)
       else this.enqueue(encoded, false)
-    })
+    }, { profileId: this.config.selectedProfileId })
     this.dsBotBinding = this.dsBotBridge?.session ?? null
   }
 
@@ -492,6 +584,19 @@ export class MossLiveRelay {
   }
 
   forwardUpstream(data, isBinary) {
+    if (!isBinary && !this.memoryRestored && this.memoryContext) {
+      let message
+      try { message = JSON.parse(String(data)) } catch { /* non-JSON upstream event */ }
+      if (message?.action === 'session.updated' && !message.data?.error && this.upstream?.readyState === 1) {
+        this.memoryRestored = true
+        const chars = [...this.memoryContext]
+        // Restore facts before forwarding readiness to the browser. This keeps
+        // history out of the business instructions and precedes microphone input.
+        for (let at = 0; at < chars.length; at += 2000) {
+          this.upstream.send(JSON.stringify({ action: 'session.thinking.append', event_id: `memory:${randomUUID()}`, content: chars.slice(at, at + 2000).join('') }))
+        }
+      }
+    }
     if (!isBinary && this.dsBotBridge) {
       let message
       try { message = JSON.parse(String(data)) } catch { /* non-JSON upstream event */ }
@@ -545,7 +650,7 @@ export class MossLiveManager {
     return { ...relay, ...(this.error ? { error: this.error } : {}) }
   }
 
-  async start(config) {
+  async start(config, { resumeMemory = true } = {}) {
     if (this.relay && this.state !== 'stopped') {
       if (this.state !== 'error' && ['starting', 'ready'].includes(this.relay.view?.().state)) return this.view()
       await this.stop()
@@ -559,7 +664,10 @@ export class MossLiveManager {
     this.state = 'starting'
     this.error = ''
     try {
-      const relay = this.createRelay({ config: normalizeMossLiveConfig(config), apiKey, userId: 'ds-bot', dsBotBridge: this.bridge })
+      const resolved = resolveMossLiveProfileConfig(config)
+      const selected = resolved.profiles.find(profile => profile.id === resolved.selectedProfileId)
+      const memoryContext = resumeMemory ? mossProfileMemoryContext(selected?.memory) : ''
+      const relay = this.createRelay({ config: resolved, memoryContext, apiKey, userId: 'ds-bot', dsBotBridge: this.bridge })
       this.relay = relay
       await relay.start()
       this.state = relay.state
@@ -599,7 +707,14 @@ export function install(rt, { fetchImpl = globalThis.fetch } = {}) {
   const mossLive = () => view()
   const mossLiveUpdate = async body => {
     const config = ensureConfig()
-    if (body?.config !== undefined) state.prefs.mossLive = normalizeMossLiveConfig({ ...config, ...body.config })
+    if (body?.config !== undefined) {
+      const next = normalizeMossLiveConfig({ ...config, ...body.config })
+      for (const profile of next.profiles) {
+        const previous = config.profiles.find(item => item.id === profile.id && item.botId === profile.botId)
+        if (previous?.memory) profile.memory = previous.memory
+      }
+      state.prefs.mossLive = next
+    }
     if (manager.state !== 'stopped') await manager.stop()
     return save()
   }
@@ -621,11 +736,52 @@ export function install(rt, { fetchImpl = globalThis.fetch } = {}) {
     if (rt.secretValue?.(MOSS_LIVE_SECRET_NAME)) await rt.secretEndpoint('secret-delete', { name: MOSS_LIVE_SECRET_NAME })
     return view()
   }
-  const mossLiveStart = async () => {
+  const mossLiveMemorySave = async body => {
     const config = ensureConfig()
+    const profileId = typeof body?.profileId === 'string' ? body.profileId.trim() : ''
+    const profile = config.profiles.find(item => item.id === profileId)
+    if (!profile) throw new Error('MOSS 当前 Profile 不存在')
+    const memory = normalizeMossProfileMemory(profile.memory)
+    if (body?.recordId !== undefined && !profileIdentifier(body.recordId)) throw new Error('MOSS 会话记录标识无效')
+    const id = body?.recordId ?? randomUUID()
+    const previous = memory.turns.find(turn => turn.id === id)
+    const contextId = previous?.contextId ?? (body?.resume === false ? id : memory.contextId)
+    const transcript = Array.isArray(body?.transcript) ? body.transcript : []
+    const items = transcript.slice(-MAX_MEMORY_ITEMS).map(item => {
+      if (!object(item) || !['user', 'assistant'].includes(item.kind)) return null
+      const text = normalizeMemoryText(item.text)
+      return text ? { kind: item.kind, text, ...(typeof item.at === 'string' && item.at ? { at: item.at.slice(0, 64) } : {}) } : null
+    }).filter(Boolean)
+    if (items.length) {
+      const turn = {
+        id,
+        ...(contextId ? { contextId } : {}),
+        ...(typeof body.startedAt === 'string' && body.startedAt ? { startedAt: body.startedAt.slice(0, 64) } : {}),
+        ...(typeof body.endedAt === 'string' && body.endedAt ? { endedAt: body.endedAt.slice(0, 64) } : {}),
+        ...(transcript.length > MAX_MEMORY_ITEMS || transcript.some(item => typeof item?.text === 'string' && [...item.text].length > MAX_MEMORY_TEXT) ? { truncated: true } : {}),
+        items,
+      }
+      const latest = !previous || memory.turns.at(-1)?.id === id
+      memory.turns = previous ? memory.turns.map(item => item.id === id ? turn : item) : [...memory.turns, turn].slice(-MAX_MEMORY_TURNS)
+      if (latest) {
+        if (contextId) memory.contextId = contextId
+        const topic = transcript.find(item => item?.kind === 'user' && typeof item.text === 'string')?.text
+        const answer = items.findLast(item => item.kind === 'assistant')?.text
+        memory.summary = normalizeMemoryText([topic && `用户：${normalizeMemoryText(topic, 600)}`, answer && `MOSS：${answer}`].filter(Boolean).join('\n'), MAX_MEMORY_SUMMARY)
+      }
+      profile.memory = memory
+      await rt.save({ required: true })
+    }
+    return view()
+  }
+  const mossLiveStart = async body => {
+    const config = ensureConfig()
+    const requested = body?.profileId === undefined ? config.selectedProfileId : String(body.profileId ?? '')
+    if (requested && !config.profiles.some(profile => profile.id === requested)) throw new Error('MOSS 当前 Profile 不存在')
+    if (requested !== config.selectedProfileId) config.selectedProfileId = requested
     config.enabled = true
     await rt.save()
-    await manager.start(config)
+    await manager.start({ ...config, selectedProfileId: requested }, { resumeMemory: body?.resume !== false })
     return view()
   }
   const mossLiveStop = async () => {
@@ -633,7 +789,7 @@ export function install(rt, { fetchImpl = globalThis.fetch } = {}) {
     await manager.stop()
     return save()
   }
-  Object.assign(rt, { mossLive, mossLiveUpdate, mossLiveSetKey, mossLiveClearKey, mossLiveVoices, mossLiveVoicePreview, mossLiveStart, mossLiveStop })
+  Object.assign(rt, { mossLive, mossLiveUpdate, mossLiveSetKey, mossLiveClearKey, mossLiveVoices, mossLiveVoicePreview, mossLiveMemorySave, mossLiveStart, mossLiveStop })
   rt.ctx.on?.('session/event', (session, event) => manager.bridge.sessionEvent(session, event))
   rt.ctx.effect(() => () => { void manager.stop() }, 'ds-bot: MOSS Live relay')
 }

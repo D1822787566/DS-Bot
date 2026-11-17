@@ -21,3 +21,38 @@ DO NOT send optional commentary
 9. 不因未来可能的需求提前增加抽象、权限体系、配置、服务、扩展点或依赖；新增结构必须说明当前必要性。
 10. 只有用户确认后的开发文档，才能作为后续开发依据；实现中发现文档未覆盖的范围时，先记录并重新确认。
 11. 开发文档完成后，只把具有长期影响且已确认的决策写入 `module-evolution`；临时讨论、未确认建议和单次步骤不写入模块记忆。
+
+## DS Bot 正式启动入口
+
+本仓库存在正式启动入口、直接 Electron 入口、诊断脚本和静态原型服务器。后续会话必须区分它们。
+
+### 用户验收和手动启动
+
+唯一正式启动命令是：
+
+```powershell
+Set-Location E:\project_space\ds-bot-dfl
+.\start.ps1
+```
+
+`start.ps1` 会按顺序完成依赖检查、构建 `ds-bot`、同步 `local-voice` 和 `ds-bot` 到 `app/node_modules`，然后通过 `app/package.json` 的 `npm start` 启动正式 Electron Desktop。用户验收、截图、真实 MOSS 测试和任何“启动程序”请求都必须使用这个入口。
+
+启动前先检查是否已经有 DS Bot 进程或 Host 端口。已有正式 Desktop 正在运行时，不要再启动第二个实例；需要加载新代码时，先正常退出旧实例，再使用 `start.ps1` 重启。
+
+### 其他入口的边界
+
+- `app/src/main.mjs` 是 Electron 的应用主文件，不是用户启动命令。只有 `start.ps1` 或 `npm start` 间接调用它。
+- `npm --prefix app start` 只适用于已经完成插件构建和同步的临时开发场景，不能代替 `start.ps1` 做用户验收。
+- `.ds-bot-local/moss-preview-probe.mjs`、`.ds-bot-local/moss-dsbot-smoke.mjs`、`.ds-bot-local/moss-persistent-ui-launch.mjs` 等是诊断或自动化验证脚本，禁止作为用户验收的启动入口。它们可能使用隔离数据、模拟 MOSS、远程调试端口或未同步的安装副本。
+- `http://127.0.0.1:28941/` 是静态视觉原型服务器，不是 DS Bot Desktop。
+- `http://127.0.0.1:26814/` 是正式 Desktop 内部 Host 的临时 Web 地址，不能作为独立启动入口，也不能据此再开一个浏览器实例。
+
+### 启动结果核对
+
+启动后应看到 DS Bot Desktop 窗口。需要确认实际运行的代码时，核对以下三项：
+
+1. 进程来自 `E:\project_space\ds-bot-dfl\app\node_modules\electron`；
+2. Host 数据目录是本次 `start.ps1` 使用的 `DS_BOT_HOME`、`DS_BOT_WORKSPACE` 和 `DS_BOT_SHELL_DATA`；
+3. `app/node_modules/ds-bot/client.js` 已由本次 `start.ps1` 从当前 `ds-bot` 源码构建并同步。
+
+如果启动方式、数据目录或安装副本不明确，应先停止并重新通过 `start.ps1` 启动，不要猜测当前窗口对应哪个副本。

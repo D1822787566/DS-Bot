@@ -4,7 +4,6 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { runInNewContext } from 'node:vm'
-import { createMossLiveController } from '../src/client/moss-live-controller.js'
 import { createSource } from '../src/client/sources.js'
 
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
@@ -19,7 +18,7 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
-const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, MossLiveCallBar, openPluginManager, openMossLiveSettings, voiceTestSummary } = module.exports
+const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, MossLiveCaptionPanel, openPluginManager, openMossLiveSettings, voiceTestSummary } = module.exports
 
 async function mount(t, component, props, configure = () => {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
@@ -114,6 +113,51 @@ test('starting MOSS after an old ready relay always requests a fresh Host sessio
   assert.deepEqual(calls.slice(0, 2), ['stop', 'start'])
 })
 
+test('starting MOSS uses the selected Profile as the session binding', async t => {
+  const starts = []
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { personaAliases: [], profiles: [
+      { id: 'profile-chief', botId: 'chief', name: 'Chief', readHistory: true, submitTasks: true },
+      { id: 'profile-writer', botId: 'writer', name: 'Writer', readHistory: false, submitTasks: true },
+    ], selectedProfileId: 'profile-writer', dsBot: { enabled: false, bots: [] } }, apiKeyConfigured: true, runtime: { state: 'stopped' }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }, { id: 'writer', name: 'Writer' }], profiles: [
+      { id: 'profile-chief', botId: 'chief', name: 'Chief', readHistory: true, submitTasks: true },
+      { id: 'profile-writer', botId: 'writer', name: 'Writer', readHistory: false, submitTasks: true },
+    ] } }),
+    mossLiveStart: body => { starts.push(body); return Promise.resolve({ config: { personaAliases: [], greetingEnabled: false, profiles: [{ id: 'profile-writer', botId: 'writer' }], selectedProfileId: 'profile-writer' }, runtime: { port: 1234, token: 'fresh' } }) },
+  } })
+  await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '开始 MOSS Live').click())
+  assert.equal(starts[0].profileId, 'profile-writer')
+})
+
+test('MOSS Profile voice selection is saved and previewed for the selected Bot only', async t => {
+  const saved = []
+  const previews = []
+  const config = {
+    personaAliases: [],
+    voiceName: 'legacy-voice',
+    profiles: [{ id: 'profile-chief', botId: 'chief', name: 'Chief', voiceName: 'voice-a', readHistory: true, submitTasks: true }],
+    selectedProfileId: 'profile-chief',
+    dsBot: { enabled: false, bots: [] },
+  }
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config, apiKeyConfigured: true, runtime: { state: 'stopped' }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }], profiles: config.profiles, tasks: [], reads: [] } }),
+    mossLiveVoices: async () => ({ voices: [{ id: 'voice-a', name: 'Alice' }, { id: 'voice-b', name: 'Bob' }] }),
+    mossLiveVoicePreview: async body => { previews.push(body); return { url: 'data:audio/mpeg;base64,SUQzBA==' } },
+    mossLiveUpdate: async body => { saved.push(body); return { config, apiKeyConfigured: true, runtime: { state: 'stopped' }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }], profiles: config.profiles, tasks: [], reads: [] } } },
+  } }, win => { win.HTMLMediaElement.prototype.play = () => Promise.resolve(); win.HTMLMediaElement.prototype.pause = () => {} })
+  await act(async () => { await Promise.resolve(); await Promise.resolve() })
+  const voice = document.querySelector('[data-moss-profile-field="voiceName"]')
+  assert.equal(voice.value, 'voice-a')
+  assert.deepEqual([...voice.options].map(option => option.value), ['', 'voice-a', 'voice-b'])
+  await act(async () => { voice.value = 'voice-b'; voice.dispatchEvent(new window.Event('change', { bubbles: true })) })
+  await act(async () => document.querySelector('[data-moss-profile-preview="voice-b"]').click())
+  await act(async () => { await Promise.resolve() })
+  assert.equal(previews.length, 1)
+  assert.equal(previews[0].voiceId, 'voice-b')
+  await act(async () => document.querySelector('[data-moss-dsbot-save]').click())
+  assert.equal(saved.at(-1).config.profiles[0].voiceName, 'voice-b')
+})
+
 test('an unavailable opening greeting restores the microphone instead of muting the new session permanently', async t => {
   const names = ['WebSocket', 'navigator', 'AudioContext', 'AudioWorkletNode', 'URL', 'Blob', 'AbortController']
   const saved = new Map(names.map(key => [key, context[key]]))
@@ -140,24 +184,28 @@ test('an unavailable opening greeting restores the microphone instead of muting 
   assert.equal(track.enabled, true)
 })
 
-test('MOSS DS Bot UI saves independent read and send grants without discarding unsaved model edits', async t => {
+test('MOSS DS Bot UI binds at most one Profile to each Bot and keeps profile permissions separate', async t => {
   const calls = []
   const document = await mount(t, MossLiveSettings, { actions: {
-    mossLive: async () => ({ config: { personaName: 'MOSS', personaAliases: [], dsBot: { enabled: false, bots: [] } }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }, { id: 'writer', name: 'Writer', private: true }], tasks: [], reads: [] }, runtime: { state: 'stopped' } }),
+    mossLive: async () => ({ config: { personaName: 'MOSS', personaAliases: [], profiles: [{ id: 'profile-chief', botId: 'chief', name: 'Chief voice', readHistory: false, submitTasks: false }], selectedProfileId: 'profile-chief', dsBot: { enabled: false, bots: [] } }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }, { id: 'writer', name: 'Writer', private: true }], profiles: [{ id: 'profile-chief', botId: 'chief', name: 'Chief voice', readHistory: false, submitTasks: false }], profileId: 'profile-chief', tasks: [], reads: [] }, runtime: { state: 'stopped' } }),
     mossLiveUpdate: async body => { calls.push(body); return undefined },
   } })
   assert.ok(document.querySelector('[data-moss-dsbot]'))
-  assert.match(document.body.textContent, /发送给 MOSS/)
-  await act(async () => document.querySelector('[data-moss-dsbot-enabled]').click())
-  await act(async () => document.querySelector('[data-moss-dsbot-grant="chief:readHistory"]').click())
-  await act(async () => document.querySelector('[data-moss-dsbot-grant="writer:submitTasks"]').click())
+  assert.match(document.body.textContent, /一个 Bot 只能绑定一个 MOSS Profile/)
+  assert.ok(document.querySelector('[data-moss-profile-bot="chief"]'))
+  assert.ok(document.querySelector('[data-moss-profile-bot="writer"]'))
+  await act(async () => document.querySelector('[data-moss-profile-bot="writer"]').click())
+  await act(async () => document.querySelector('[data-moss-profile-create]').click())
+  await act(async () => document.querySelector('[data-moss-profile-permission="readHistory"]').click())
+  await act(async () => document.querySelector('[data-moss-profile-permission="submitTasks"]').click())
   const name = document.querySelector('[data-moss-live-field="personaName"]')
   Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(name, 'unsaved name')
   await act(async () => name.dispatchEvent(new window.Event('input', { bubbles: true })))
   await act(async () => document.querySelector('[data-moss-dsbot-save]').click())
-  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), { config: { dsBot: { enabled: true, bots: [
-    { botId: 'chief', readHistory: true, submitTasks: false }, { botId: 'writer', readHistory: false, submitTasks: true },
-  ] } } })
+  const saved = calls.at(-1).config
+  assert.equal(saved.profiles.length, 2)
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.profiles.find(profile => profile.botId === 'writer'))), { id: 'moss-writer', botId: 'writer', name: 'Writer', voiceName: '', readHistory: true, submitTasks: true })
+  assert.equal(saved.selectedProfileId, 'moss-writer')
   assert.equal(document.querySelector('[data-moss-live-field="personaName"]').value, 'unsaved name')
 })
 
@@ -175,61 +223,138 @@ test('MOSS DS Bot task cards show actual status and open the target Bot', async 
   assert.deepEqual(opened, ['chief'])
 })
 
-test('leaving MOSS settings and returning through the permanent bar preserves the live session and video preview', async t => {
-  assert.equal(typeof MossLiveCallBar, 'function', 'The live call needs a root-mounted control bar')
-  let session, stops = 0, starts = 0
-  const config = { enabled: true, personaAliases: [], greetingEnabled: false }
-  const actions = {
-    mossLive: async () => ({ config, apiKeyConfigured: true, runtime: { state: 'ready' } }),
-    mossLiveStart: async () => { starts++; return { config, runtime: { port: 1234, token: 'live' } } },
-    mossLiveStop: async () => {},
-  }
-  const controller = createMossLiveController({ actions, createSession: options => (session = {
-    ws: {}, state: 'ready', connect: async () => options.onState('ready'), startMic: async () => {}, setMicEnabled() {},
-    stop: async () => { stops++ },
-    startScreenShare: async () => { options.onScreenStream({ id: 'same-screen' }); return true },
-    stopScreenShare: async () => options.onScreenStream(null), options,
-  }) })
-  await controller.start()
-  controller.setMuted(true)
-  await controller.startScreenShare()
-  session.options.onTranscript({ kind: 'user', text: '别断线，我去看看华子', final: true })
-  function Shell() {
-    const [open, setOpen] = React.useState(true)
-    return React.createElement(React.Fragment, null,
-      React.createElement('button', { 'data-away': true, onClick: () => setOpen(false) }, '打开华子'),
-      open ? React.createElement(MossLiveSettings, { actions, controller }) : null,
-      React.createElement(MossLiveCallBar, { controller, onReturn: () => setOpen(true) }))
-  }
-  const document = await mount(t, Shell, {}, window => { window.HTMLMediaElement.prototype.play = async () => {} })
-  t.after(() => controller.dispose())
-  await act(async () => document.querySelector('[data-away]').click())
-  assert.equal(document.querySelector('.bt-moss-live'), null)
-  assert.equal(stops, 0)
-  const bar = document.querySelector('[data-moss-call-bar]')
-  assert.ok(bar)
-  assert.equal(bar.querySelector('[data-moss-call-mute]').getAttribute('aria-pressed'), 'true')
-  await act(async () => bar.querySelector('[data-moss-call-return]').click())
-  assert.equal(starts, 1)
-  assert.match(document.querySelector('.bt-moss-transcript').textContent, /别断线，我去看看华子/)
-  assert.equal(document.querySelector('video').srcObject.id, 'same-screen')
-  await act(async () => bar.querySelector('[data-moss-call-share-stop]').click())
+test('MOSS Profile UI keeps a deleted Bot binding unavailable', async t => {
+  const document = await mount(t, MossLiveSettings, { actions: {
+    mossLive: async () => ({ config: { personaAliases: [], profiles: [{ id: 'profile-gone', botId: 'gone', name: 'Gone', readHistory: true, submitTasks: true }], selectedProfileId: 'profile-gone' }, dsBot: { bots: [{ id: 'gone', name: 'Gone', unavailable: true }], profiles: [{ id: 'profile-gone', botId: 'gone', name: 'Gone', readHistory: true, submitTasks: true }], profileId: 'profile-gone', tasks: [], reads: [] }, runtime: { state: 'stopped' } }),
+  } })
+  assert.match(document.querySelector('[data-moss-profile-editor="gone"]').textContent, /Bot 不可用/)
+  assert.equal(document.querySelector('[data-moss-profile-create]'), null)
+})
+
+test('switching the selected Profile while a call is active ends the old call first', async t => {
+  const stops = []
+  const controller = createSource({ visible: true, active: true, busy: false, sessionState: 'ready', muted: false, transcript: [], screenStream: null, screenBusy: false, screenError: '', endedAt: '' })
+  controller.stop = async () => { stops.push('stop') }
+  const document = await mount(t, MossLiveSettings, { controller, actions: {
+    mossLive: async () => ({ config: { personaAliases: [], profiles: [
+      { id: 'profile-chief', botId: 'chief', name: 'Chief', readHistory: true, submitTasks: true },
+      { id: 'profile-writer', botId: 'writer', name: 'Writer', readHistory: false, submitTasks: true },
+    ], selectedProfileId: 'profile-chief' }, dsBot: { bots: [{ id: 'chief', name: 'Chief' }, { id: 'writer', name: 'Writer' }], profiles: [], tasks: [], reads: [] }, runtime: { state: 'ready' } }),
+    mossLiveStop: async () => { stops.push('stop') },
+  } })
+  await act(async () => document.querySelector('[data-moss-profile-bot="writer"]').click())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(stops, ['stop'])
+})
+
+test('MOSS caption panel keeps both speakers visible and owns voice controls', async t => {
+  assert.equal(typeof MossLiveCaptionPanel, 'function')
+  const controller = createSource({
+    visible: true, active: true, sessionState: 'ready', muted: false, transcript: [
+      { kind: 'user', text: '我想练习一段自我介绍。', done: true },
+      { kind: 'assistant', text: '可以，我们从第一句开始。', done: true },
+    ], screenStream: { id: 'screen' }, screenBusy: false, screenError: '', endedAt: '',
+  })
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  assert.ok(document.querySelector('[data-moss-caption-panel]'))
+  assert.match(document.querySelector('[data-moss-caption-current]').textContent, /我们从第一句开始/)
+  assert.match(document.querySelector('[data-moss-caption-transcript]').textContent, /我想练习一段自我介绍/)
+  assert.ok(document.querySelector('[data-moss-caption-speaker="user"]'))
+  assert.ok(document.querySelector('[data-moss-caption-speaker="assistant"]'))
+  assert.ok(document.querySelector('[data-moss-caption-mute]'))
+  assert.ok(document.querySelector('[data-moss-caption-end]'))
+  assert.ok(document.querySelector('[data-moss-caption-share-stop]'))
+  assert.equal(document.querySelector('[data-moss-caption-pair]'), null)
+})
+
+test('bound MOSS caption panel shows an idle dial card and settings action before a call', async t => {
+  const source = createSource({
+    visible: true, active: false, busy: false, endedAt: '', boundBotId: 'bot-h', profileId: 'profile-h',
+    boundProfile: { id: 'profile-h', botId: 'bot-h', name: '华子练习', voiceName: 'voice-a' }, transcript: [],
+  })
+  const calls = []
+  const controller = { ...source, start: id => calls.push(['start', id]) }
+  const document = await mount(t, MossLiveCaptionPanel, { controller, onOpenSettings: id => calls.push(['settings', id]) })
+  assert.match(document.body.textContent, /已绑定 · 未开始/)
+  assert.match(document.body.textContent, /华子练习/)
+  assert.ok(document.querySelector('[data-moss-caption-idle]'))
+  await act(async () => document.querySelector('[data-moss-caption-dial]').click())
+  await act(async () => document.querySelector('[data-moss-caption-settings]').click())
+  assert.deepEqual(calls, [['start', 'profile-h'], ['settings', 'bot-h']])
+})
+
+test('bound MOSS caption panel offers a fresh context when Profile memory exists', async t => {
+  const source = createSource({
+    visible: true, active: false, busy: false, endedAt: '', boundBotId: 'bot-h', profileId: 'profile-h',
+    boundProfile: { id: 'profile-h', botId: 'bot-h', name: '华子练习', voiceName: 'voice-a', memory: { summary: '上次练习了自我介绍。', turns: [{ id: 'turn-1', items: [{ kind: 'user', text: '你好。' }] }] } }, transcript: [],
+  })
+  const calls = []
+  const controller = { ...source, start: (...args) => calls.push(args) }
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  assert.match(document.body.textContent, /上次练习了自我介绍/)
+  await act(async () => document.querySelector('[data-moss-caption-new-context]').click())
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0], 'profile-h')
+  assert.equal(calls[0][1].resume, false)
+})
+
+test('saved MOSS conversations remain readable after returning to the Bot page', async t => {
+  const controller = createSource({
+    visible: true, active: false, busy: false, endedAt: '', boundBotId: 'bot-h', profileId: 'profile-h', transcript: [],
+    boundProfile: { id: 'profile-h', botId: 'bot-h', name: '口语练习', memory: { summary: '预约练习', turns: [{ id: 'yesterday', endedAt: '2026-11-16T01:00:00Z', items: [{ kind: 'user', text: '昨天练习了预约。' }, { kind: 'assistant', text: '记得说明日期。' }] }] } },
+  })
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  await act(async () => document.querySelector('[data-moss-caption-history-toggle]').click())
+  const saved = document.querySelector('[data-moss-caption-saved-history]')
+  assert.match(saved.textContent, /昨天练习了预约/)
+  assert.match(saved.textContent, /记得说明日期/)
+  assert.equal(controller.getSnapshot().active, false)
+  await act(async () => document.querySelector('[data-moss-caption-history-toggle]').click())
+  assert.ok(document.querySelector('[data-moss-caption-idle]'))
+})
+
+test('a hung-up MOSS call offers a fresh context and shows memory storage failures', async t => {
+  const source = createSource({ visible: true, active: false, busy: false, endedAt: '2026-11-17T01:00:00Z', boundBotId: 'bot-h', profileId: 'profile-h', transcript: [], memoryError: '会话记录保存失败。', boundProfile: { id: 'profile-h', memory: { turns: [{ id: 'last', items: [{ kind: 'user', text: '上次练习' }] }] } } })
+  const calls = []
+  const controller = { ...source, start: (...args) => calls.push(args) }
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  assert.match(document.querySelector('[role=alert]').textContent, /保存失败/)
+  await act(async () => document.querySelector('[data-moss-caption-new-context]').click())
+  assert.equal(calls[0][1].resume, false)
+})
+
+test('MOSS caption panel yields while the Bot details drawer is open', async t => {
+  const controller = createSource({ visible: true, active: false, busy: false, endedAt: '', boundBotId: 'bot-h', profileId: 'profile-h', boundProfile: { id: 'profile-h', botId: 'bot-h', name: '华子练习' }, transcript: [] })
+  const ui = createSource({ details: 'bot-h' })
+  const document = await mount(t, MossLiveCaptionPanel, { controller, ui })
+  assert.equal(Boolean(document.querySelector('[data-moss-caption-panel]')), false)
+  await act(async () => { ui.set({ details: null }) })
+  assert.equal(Boolean(document.querySelector('[data-moss-caption-panel]')), true)
+})
+
+test('MOSS caption panel pauses follow mode after manual scroll and offers the latest jump', async t => {
+  const controller = createSource({ visible: true, active: true, sessionState: 'ready', muted: false, transcript: [
+    { kind: 'user', text: '第一句', done: true }, { kind: 'assistant', text: '第二句', done: true },
+  ], screenStream: null, screenBusy: false, screenError: '', endedAt: '' })
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  const history = document.querySelector('[data-moss-caption-transcript]')
+  Object.defineProperties(history, { scrollHeight: { configurable: true, value: 400 }, clientHeight: { configurable: true, value: 100 }, scrollTop: { configurable: true, writable: true, value: 0 } })
+  await act(async () => history.dispatchEvent(new window.Event('scroll', { bubbles: true })))
+  assert.ok(document.querySelector('.bt-moss-caption-latest'))
+  await act(async () => document.querySelector('.bt-moss-caption-latest').click())
+  assert.equal(history.scrollTop, 400)
+})
+
+test('MOSS caption panel provides a narrow-window Bot chat tab without ending the call', async t => {
+  const controller = createSource({ visible: true, active: true, sessionState: 'ready', muted: false, transcript: [], screenStream: null, screenBusy: false, screenError: '', endedAt: '' })
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  const bot = document.querySelector('[data-moss-caption-tab-button="bot"]')
+  assert.ok(bot)
+  await act(async () => bot.click())
+  assert.equal(document.querySelector('[data-moss-caption-panel]').dataset.mossCaptionTab, 'bot')
   assert.equal(controller.getSnapshot().active, true)
-  assert.equal(controller.getSnapshot().screenStream, null)
-  await act(async () => bar.querySelector('[data-moss-call-end]').click())
-  assert.equal(stops, 1)
-  assert.ok(document.querySelector('[data-moss-call-bar]'))
-  assert.match(bar.textContent, /已挂断/)
-  assert.equal(bar.querySelector('[data-moss-call-mute]'), null)
-  const redial = bar.querySelector('[data-moss-call-redial]')
-  assert.ok(redial)
-  assert.equal(redial.getAttribute('aria-label'), '重新拨打')
-  await act(async () => { redial.click(); redial.click() })
-  assert.equal(starts, 2)
-  assert.equal(controller.getSnapshot().active, true)
-  assert.equal(controller.getSnapshot().screenStream, null)
-  assert.equal(controller.getSnapshot().transcript.length, 0)
-  assert.ok(bar.querySelector('[data-moss-call-end]'))
+  await act(async () => document.querySelector('[data-moss-caption-tab-button="captions"]').click())
+  assert.equal(document.querySelector('[data-moss-caption-panel]').dataset.mossCaptionTab, 'captions')
 })
 
 test('returning to MOSS selects its existing plugin tab without creating a voice session', async () => {
@@ -240,18 +365,6 @@ test('returning to MOSS selects its existing plugin tab without creating a voice
     slots: { entries: () => [{ options: { key: 'plugins' }, store: { create: () => ({ actions: { setTab: id => calls.push(id) } }) } }] },
   })
   assert.deepEqual(calls, ['plugins', 'list', 'ds-bot-moss-live'])
-})
-
-test('the permanent bar reserves the visible sidebar width on desktop and the avatar rail on narrow windows', async t => {
-  const controller = createSource({ visible: true, active: true, sessionState: 'ready', transcript: [], startedAt: '', endedAt: '' })
-  const geometry = {
-    frame: createSource({ viewport: 1320, sidebarWidth: 280, collapsed: false }),
-    sidebarPref: createSource('open'), ui: createSource({ details: null }), surface: createSource({ mode: 'bot' }),
-  }
-  const document = await mount(t, MossLiveCallBar, { controller, geometry })
-  assert.equal(document.querySelector('.bt-moss-call-seat').style.getPropertyValue('--moss-inset'), '280px')
-  await act(async () => geometry.frame.set({ viewport: 430, sidebarWidth: 280, collapsed: true, collapsedWidth: 0 }))
-  assert.equal(document.querySelector('.bt-moss-call-seat').style.getPropertyValue('--moss-inset'), '88px')
 })
 
 test('MOSS Live phase one exposes scene presets, greeting settings and the animated stage', async t => {

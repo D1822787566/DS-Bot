@@ -39,6 +39,8 @@ test('MOSS Live defaults describe the supported realtime endpoint and model', ()
     greetingEnabled: true,
     greetingText: '你好，我是 DS Bot，现在可以直接和我说话。',
     maxSessionSeconds: 1800,
+    profiles: [],
+    selectedProfileId: '',
     dsBot: { enabled: false, bots: [] },
   })
 })
@@ -62,6 +64,86 @@ test('MOSS Live configuration accepts bounded persona settings and rejects unsaf
   assert.equal(value.greetingText, '你好。')
   assert.throws(() => normalizeMossLiveConfig({ wsEndpoint: 'https://example.com/realtime' }), /MOSS Live endpoint/)
   assert.throws(() => normalizeMossLiveConfig({ maxSessionSeconds: 10 }), /session length/)
+})
+
+test('MOSS Live profiles bind one stable Bot to one normalized voice profile', () => {
+  const value = normalizeMossLiveConfig({
+    profiles: [{ id: 'profile-h', botId: 'bot-h', name: '华子', readHistory: true, submitTasks: false, memory: {
+      summary: '上次练习了英语问答。',
+      turns: [{ id: 'turn-1', startedAt: '2026-11-13T10:00:00.000Z', endedAt: '2026-11-13T10:10:00.000Z', items: [
+        { kind: 'user', text: '请纠正我的发音。', at: '2026-11-13T10:01:00.000Z' },
+        { kind: 'assistant', text: '先练习 th 音。', at: '2026-11-13T10:01:05.000Z' },
+      ] }],
+    } }],
+  })
+  assert.deepEqual(value.profiles, [{
+    id: 'profile-h', botId: 'bot-h', name: '华子', voiceName: '', readHistory: true, submitTasks: false,
+    memory: {
+      summary: '上次练习了英语问答。',
+      turns: [{ id: 'turn-1', startedAt: '2026-11-13T10:00:00.000Z', endedAt: '2026-11-13T10:10:00.000Z', items: [
+        { kind: 'user', text: '请纠正我的发音。', at: '2026-11-13T10:01:00.000Z' },
+        { kind: 'assistant', text: '先练习 th 音。', at: '2026-11-13T10:01:05.000Z' },
+      ] }],
+    },
+  }])
+  assert.equal(value.selectedProfileId, 'profile-h')
+  assert.throws(() => normalizeMossLiveConfig({ profiles: [
+    { id: 'one', botId: 'same' }, { id: 'two', botId: 'same' },
+  ] }), /Bot.*Profile|重复/)
+  const migrated = normalizeMossLiveConfig({ dsBot: { enabled: true, bots: [{ botId: 'legacy', readHistory: true, submitTasks: true }] } })
+  assert.deepEqual(migrated.profiles, [{ id: 'legacy', botId: 'legacy', name: 'legacy', voiceName: '', readHistory: true, submitTasks: true }])
+  assert.equal(migrated.selectedProfileId, 'legacy')
+})
+
+test('MOSS Live saves a bounded transcript turn into the Profile memory', async () => {
+  let saves = 0
+  const rt = {
+    state: { prefs: { mossLive: { profiles: [{ id: 'profile-h', botId: 'bot-h', name: '华子' }] } } },
+    ctx: { effect() {} },
+    save: async () => { saves += 1 },
+    secretValue: () => '',
+  }
+  install(rt)
+  const result = await rt.mossLiveMemorySave({ profileId: 'profile-h', startedAt: '2026-11-14T09:00:00.000Z', endedAt: '2026-11-14T09:10:00.000Z', transcript: [
+    { kind: 'user', text: '继续上次练习。', at: '2026-11-14T09:01:00.000Z' },
+    { kind: 'assistant', text: '好的，我们继续。', at: '2026-11-14T09:01:02.000Z' },
+  ] })
+  const profile = result.config.profiles[0]
+  assert.equal(saves, 1)
+  assert.equal(profile.memory.turns.length, 1)
+  assert.equal(profile.memory.turns[0].items[1].text, '好的，我们继续。')
+})
+
+test('MOSS Live keeps a distinct voice on each Profile and migrates the legacy global voice', () => {
+  const value = normalizeMossLiveConfig({
+    voiceName: 'legacy-voice',
+    profiles: [
+      { id: 'profile-h', botId: 'bot-h', name: '华子' },
+      { id: 'profile-c', botId: 'bot-c', name: '才子', voiceName: 'profile-voice' },
+    ],
+  })
+  assert.equal(value.voiceName, 'legacy-voice')
+  assert.equal(value.profiles.find(profile => profile.id === 'profile-h').voiceName, 'legacy-voice')
+  assert.equal(value.profiles.find(profile => profile.id === 'profile-c').voiceName, 'profile-voice')
+
+  const migrated = normalizeMossLiveConfig({
+    voiceName: 'legacy-voice',
+    dsBot: { enabled: true, bots: [{ botId: 'legacy', readHistory: true, submitTasks: true }] },
+  })
+  assert.equal(migrated.profiles[0].voiceName, 'legacy-voice')
+})
+
+test('MOSS DS Bot bridge authorizes only the Bot bound to the active Profile', () => {
+  const config = normalizeMossLiveConfig({ profiles: [{ id: 'profile-h', botId: 'bot-h', readHistory: true, submitTasks: true }] })
+  const bridge = new MossDsBotBridge({
+    state: { prefs: { mossLive: config }, bots: { 'bot-h': { id: 'bot-h', name: '华子' } } },
+    botOf: id => id === 'bot-h' ? { id, name: '华子' } : undefined,
+  })
+  bridge.open(() => {}, { profileId: 'profile-h' })
+  assert.equal(bridge.boundBotId(), 'bot-h')
+  assert.equal(bridge.grant('bot-h', 'readHistory'), true)
+  assert.equal(bridge.grant('other', 'readHistory'), false)
+  bridge.close()
 })
 
 test('MOSS Live configuration accepts the documented media and interpretation settings', () => {
@@ -204,6 +286,38 @@ test('MOSS Live manager can retry after a relay enters an error state', async ()
   assert.equal(created, 2)
 })
 
+test('MOSS Live manager opens the requested Profile for a new session', async () => {
+  let relayConfig
+  const manager = new MossLiveManager({ secretValue: () => 'secret' }, { createRelay: options => {
+    relayConfig = options.config
+    return { state: 'ready', view() { return { state: this.state } }, start: async () => {}, stop: async function () { this.state = 'stopped' } }
+  } })
+  const config = normalizeMossLiveConfig({ profiles: [
+    { id: 'profile-h', botId: 'bot-h', name: '华子', voiceName: 'voice-h', readHistory: true, submitTasks: true },
+    { id: 'profile-c', botId: 'bot-c', name: '才子', voiceName: 'voice-c', readHistory: false, submitTasks: true },
+  ], selectedProfileId: 'profile-c' })
+  await manager.start(config)
+  assert.equal(relayConfig.selectedProfileId, 'profile-c')
+  assert.equal(relayConfig.profiles.find(profile => profile.id === 'profile-c').botId, 'bot-c')
+  assert.equal(relayConfig.voiceName, 'voice-c')
+})
+
+test('MOSS Live resume mode passes Profile memory into the new relay session', async () => {
+  let memoryContext
+  const manager = new MossLiveManager({ secretValue: () => 'secret' }, { createRelay: options => {
+    memoryContext = options.memoryContext
+    return { state: 'ready', view() { return { state: this.state } }, start: async () => {}, stop: async function () { this.state = 'stopped' } }
+  } })
+  const config = normalizeMossLiveConfig({ profiles: [{ id: 'profile-h', botId: 'bot-h', name: '华子', memory: {
+    turns: [{ id: 'turn-1', items: [{ kind: 'user', text: '上次我们练习了自我介绍。' }] }],
+  } }], selectedProfileId: 'profile-h' })
+  await manager.start(config)
+  assert.match(memoryContext, /上次我们练习了自我介绍/)
+  await manager.stop()
+  await manager.start(config, { resumeMemory: false })
+  assert.equal(memoryContext, '')
+})
+
 test('the manager creates a new upstream after a disconnected relay has stopped', async () => {
   let created = 0, last
   const manager = new MossLiveManager({ secretValue: () => 'key' }, { createRelay: () => {
@@ -269,6 +383,20 @@ test('MOSS Live start restores defaults after a saved state reload has no MOSS c
   assert.equal(view.config.model, 'moss-live-1.0')
   assert.equal(view.runtime.state, 'error')
   assert.match(view.runtime.error, /API Key/)
+})
+
+test('MOSS Live host action persists the manually selected Profile before starting', async () => {
+  const rt = {
+    state: { prefs: { mossLive: { profiles: [
+      { id: 'profile-h', botId: 'bot-h', name: '华子' }, { id: 'profile-c', botId: 'bot-c', name: '才子' },
+    ], selectedProfileId: 'profile-h' } } },
+    ctx: { effect() {} },
+    save: async () => {},
+    secretValue: () => '',
+  }
+  install(rt)
+  await rt.mossLiveStart({ profileId: 'profile-c' })
+  assert.equal(rt.state.prefs.mossLive.selectedProfileId, 'profile-c')
 })
 
 test('MOSS Live relay authenticates the local client and forwards only cleaned events', async () => {

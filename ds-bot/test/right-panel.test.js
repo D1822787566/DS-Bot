@@ -130,6 +130,12 @@ const menuItem = (node, key) => {
   const button = moreButton(node)
   return [...(button?.children.flat(Infinity).find(child => child?.props?.items)?.props?.items ?? [])].find(item => item.key === key)
 }
+const textOf = node => {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  return textOf(node.children ?? [])
+}
 
 test('the drawer `···` lists browser, a side chat, and the column tabs', () => {
   const picks = { openBrowser: 0, newSideChat: 0, newTerminal: 0, openFiles: 0 }
@@ -150,6 +156,11 @@ test('the drawer `···` lists browser, a side chat, and the column tabs', () =
 
 test('a bot in a window without a browser still gets Side chat in the `···`', () => {
   assert.deepEqual(menuKeys(drawer('a', {})), ['side'])
+})
+
+test('a Bot details drawer exposes the MOSS Live tab when the MOSS action is available', () => {
+  const node = drawer('a', { mossLive: () => Promise.resolve({}), mossLiveController: {} })
+  assert.match(textOf(node), /MOSS Live/)
 })
 
 test('a group keeps only the column tabs, and nothing when they are absent', () => {

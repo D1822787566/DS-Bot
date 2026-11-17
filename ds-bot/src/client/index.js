@@ -24,7 +24,7 @@ import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
 import { Overlays } from './overlays.js'
-import { BotPresets, MossLiveSettings, MossLiveCallBar, PhoneAgentSettings, openPluginManager, openMossLiveSettings, PLUGIN_CSS, MOSS_CALL_CSS } from './plugin-page.js'
+import { BotPresets, MossLiveSettings, MossLiveCaptionPanel, PhoneAgentSettings, openPluginManager, openMossLiveSettings, PLUGIN_CSS } from './plugin-page.js'
 import { createMossLiveController, bindMossLiveLifecycle } from './moss-live-controller.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
@@ -421,6 +421,11 @@ export function apply(ctx) {
     return ids
   }
   const mainView = () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
+  const currentBotId = () => {
+    const sessionId = mainView()
+    if (sessionId === undefined) return null
+    return Object.values(roster.getSnapshot().byId ?? {}).find(bot => currentPart(bot) === sessionId)?.id
+  }
   const show = listedOpener({ list: ctx.sessions.list, refresh: () => Promise.resolve(ctx.sessions.refresh?.()).catch(quietly('refresh sessions')), open: (target) => { expected = target; ctx.uiWorkspace.openSession(target) }, current: mainView })
   // Whether the open Bot panel is folded away for lack of room: its opener then
   // means "show it" (the column yields), not "close it". A panel shown because
@@ -691,15 +696,26 @@ export function apply(ctx) {
   actions.mossLiveClearKey = () => call('moss-live-clear-key')
   actions.mossLiveVoices = () => call('moss-live-voices')
   actions.mossLiveVoicePreview = body => call('moss-live-voice-preview', body)
-  actions.mossLiveStart = () => call('moss-live-start')
+  actions.mossLiveMemorySave = body => call('moss-live-memory-save', body)
+  actions.mossLiveStart = body => call('moss-live-start', body)
   actions.mossLiveStop = () => call('moss-live-stop')
   actions.mossLiveOpenBot = async id => {
     await pull()
     if (roster.getSnapshot().byId[id] !== undefined) actions.openSession(id)
   }
   const mossLiveController = createMossLiveController({ actions })
+  actions.mossLiveController = mossLiveController
+  const resolveMossBinding = async botId => {
+    if (!botId) return null
+    const value = await actions.mossLive()
+    return value?.config?.profiles?.find(profile => profile.botId === botId) ?? null
+  }
+  actions.openMossLiveDetails = id => {
+    if (!id) return
+    ui.set(state => ({ ...state, details: id, view: 'details', tab: 'moss', renaming: false, panelYield: panelFolded?.('details') === true || state.panelYield === true }))
+  }
   ctx.effect(() => {
-    const release = bindMossLiveLifecycle(mossLiveController, { roster })
+    const release = bindMossLiveLifecycle(mossLiveController, { roster, currentBotId, currentBotSource: ctx.sessions.list, resolveBinding: resolveMossBinding })
     return () => { void release() }
   }, 'ds-bot: MOSS Live owner')
   actions.openMossLive = async () => {
@@ -897,8 +913,11 @@ export function apply(ctx) {
     name, ...options, ...(options.priority === undefined ? {} : { priority: freePriority(ctx.slots.entries(name), options) }),
   }, component))
   const installHeader = () => ctx.slots.inject('conversation.session.header', () => installHeaderNavigation(ctx.slots, face, HeaderPill, BOT_PRIORITY))
-  ctx.effect(() => installCompiledStyles(MOSS_CALL_CSS, 'moss-call'), 'ds-bot: MOSS Live call styles')
-  shadow('shell.bottom', { priority: BOT_PRIORITY, inject: () => ({ controller: mossLiveController, geometry: { frame, sidebarPref, ui, surface }, onReturn: () => { void actions.openMossLive().catch(error => actions.reportError(error, 'moss-live-return')) } }) }, MossLiveCallBar)
+  shadow('shell.overlay', { id: 'moss-live-caption', order: 35, priority: BOT_PRIORITY, inject: () => ({
+    controller: mossLiveController,
+    ui,
+    onOpenSettings: botId => { if (botId) actions.openMossLiveDetails(botId) },
+  }) }, MossLiveCaptionPanel)
 
   // The "@" menu's Bot group and the chats "+" references. The composer's controller
   // for a Session is the shell's own, so the chats open at its caret.

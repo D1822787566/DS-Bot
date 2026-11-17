@@ -2,9 +2,10 @@ import { createElement as h, useEffect, useRef, useState, useSyncExternalStore }
 import { hostText, t } from './i18n.js'
 import { transcriptMarkdown } from './moss-live.js'
 import { createMossLiveController } from './moss-live-controller.js'
-export { MossLiveCallBar, MOSS_CALL_CSS } from './moss-live-bar.js'
 
 const LABELS = { unchecked: 'Not checked', checking: 'Checking compatibility', ready: 'Ready for Bot', partial: 'Partially compatible', single: 'Single chat only', unverified: 'Needs verification', incompatible: 'Not compatible', failed: 'Check failed', outdated: 'Check outdated' }
+const EMPTY_UI_STATE = Object.freeze({ details: null })
+const EMPTY_UI_STORE = Object.freeze({ subscribe: () => () => {}, getSnapshot: () => EMPTY_UI_STATE })
 
 export function PresetReport({ report }) {
   if (!report) return null
@@ -373,35 +374,70 @@ function downloadMossTranscript(items, config, startedAt, endedAt) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function MossDsBotPanel({ config = { enabled: false, bots: [] }, view = {}, busy, interpret, onChange, onSave, onOpenBot }) {
-  const [query, setQuery] = useState('')
+function MossDsBotPanel({ config = { enabled: false, profiles: [], selectedProfileId: '' }, view = {}, busy, interpret, onChange, onSave, onOpenBot, onBeforeProfileChange, onStopVoicePreview, voices = [], voicesBusy = false, voicesError = '', previewVoice = '', previewStatus = 'idle', previewVoiceSample, onRefreshVoices }) {
   const bots = view.bots ?? []
-  const grants = config.bots ?? []
-  const visible = bots.filter(bot => `${bot.name} ${bot.id}`.toLowerCase().includes(query.trim().toLowerCase()))
-  const changeGrant = (botId, key, checked) => {
-    const current = grants.find(item => item.botId === botId) ?? { botId, readHistory: false, submitTasks: false }
-    const next = { ...current, [key]: checked }
-    onChange({ ...config, bots: grants.some(item => item.botId === botId) ? grants.map(item => item.botId === botId ? next : item) : [...grants, next] })
+  const profiles = config.profiles ?? view.profiles ?? []
+  const selectedProfileId = config.selectedProfileId ?? view.profileId ?? ''
+  const selectedProfile = profiles.find(profile => profile.id === selectedProfileId) ?? null
+  const [selectedBotId, setSelectedBotId] = useState(selectedProfile?.botId ?? bots[0]?.id ?? '')
+  const selectedBot = bots.find(bot => bot.id === selectedBotId) ?? null
+  const selectedBotProfile = profiles.find(profile => profile.botId === selectedBotId) ?? null
+  const profileVoice = String(selectedBotProfile?.voiceName ?? '').trim()
+  const profileVoiceOptions = [
+    { value: '', label: '默认音色' },
+    ...(profileVoice && !voices.some(item => item.id === profileVoice) ? [{ value: profileVoice, label: `当前音色（${profileVoice}）` }] : []),
+    ...voices.map(item => ({ value: item.id, label: item.name })),
+  ]
+  useEffect(() => {
+    if (selectedProfile && selectedProfile.botId !== selectedBotId) setSelectedBotId(selectedProfile.botId)
+    else if (!selectedBotId && bots[0]) setSelectedBotId(bots[0].id)
+  }, [config.selectedProfileId, profiles.length, bots.length])
+  const chooseBot = botId => {
+    onStopVoicePreview?.()
+    setSelectedBotId(botId)
+    const profile = profiles.find(item => item.botId === botId)
+    Promise.resolve(onBeforeProfileChange?.()).then(() => onChange({ ...config, selectedProfileId: profile?.id ?? '' }))
+  }
+  const createProfile = () => {
+    if (!selectedBot || selectedBot.unavailable || selectedBotProfile) return
+    const base = `moss-${selectedBot.id}`.slice(0, 128)
+    let id = base; let suffix = 2
+    while (profiles.some(profile => profile.id === id)) id = `${base.slice(0, 127 - String(suffix).length)}-${suffix++}`
+    const profile = { id, botId: selectedBot.id, name: selectedBot.name, voiceName: String(config.voiceName ?? '').trim(), readHistory: false, submitTasks: false }
+    onChange({ ...config, profiles: [...profiles, profile], selectedProfileId: id })
+  }
+  const changeProfile = (key, value) => {
+    if (!selectedBotProfile) return
+    onChange({ ...config, profiles: profiles.map(profile => profile.id === selectedBotProfile.id ? { ...profile, [key]: value } : profile) })
   }
   const status = { submitting: '正在提交', queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', cancelled: '已停止', uncertain: '接收状态待核实', needs_input: '需要用户操作', needs_review: '结果待核实' }
   const open = (botId, label = '打开 Bot') => h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: !onOpenBot || !bots.some(bot => bot.id === botId && !bot.unavailable), onClick: () => onOpenBot(botId) }, label)
   return h('div', { 'data-moss-dsbot': true },
     h('details', { className: 'bt-phone-card bt-moss-dsbot-settings' },
-      h('summary', null, h('strong', null, 'DS Bot 接入'), h('span', { className: 'bt-note' }, config.enabled ? '已启用' : '未启用')),
-      h('p', { className: 'bt-note' }, '允许读取的私聊片段及任务结果会发送给 MOSS。读取历史与派发任务分别授权，默认关闭。'),
-      h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', 'data-moss-dsbot-enabled': true, checked: config.enabled === true, disabled: busy, onChange: event => onChange({ ...config, enabled: event.target.checked }) }), '允许 MOSS 接入所选 Bot'),
+      h('summary', null, h('strong', null, 'DS Bot 接入'), h('span', { className: 'bt-note' }, selectedProfile ? 'Profile 已选中' : '请选择 Profile')),
+      h('p', { className: 'bt-note' }, '一个 Bot 只能绑定一个 MOSS Profile。Profile 决定当前语音会话可以读取历史或派发任务的范围。'),
       interpret ? h('p', { className: 'bt-note' }, '同声传译模式不执行 DS Bot 操作；这些设置在对话模式生效。') : null,
-      bots.length ? h('label', { className: 'bt-phone-field' }, h('span', null, '查找 Bot'), h('input', { className: 'bt-input', type: 'search', value: query, onInput: event => setQuery(event.target.value) })) : h('p', { className: 'bt-note' }, '还没有 Bot，请先从侧栏创建 Bot。'),
-      bots.length ? h('div', { className: 'bt-moss-dsbot-roster', role: 'group', 'aria-label': 'Bot 接入范围' },
-        visible.length ? visible.map(bot => {
-          const grant = grants.find(item => item.botId === bot.id)
-          return h('div', { key: bot.id, className: 'bt-moss-dsbot-row' },
-            h('span', null, bot.name, bot.private ? h('small', { className: 'bt-note' }, ' · 私有') : null, bot.unavailable ? h('small', { className: 'bt-note' }, ' · 已失效') : null),
-            ...[['readHistory', '读取历史'], ['submitTasks', '派发任务']].map(([key, label]) => h('label', { key, className: 'bt-phone-check' }, h('input', { type: 'checkbox', 'data-moss-dsbot-grant': `${bot.id}:${key}`, checked: grant?.[key] === true, disabled: busy || (bot.unavailable && !grant?.[key]), onChange: event => changeGrant(bot.id, key, event.target.checked) }), label)))
-        }) : h('p', { className: 'bt-note' }, '没有匹配的 Bot。')) : null,
-      h('p', { className: 'bt-note' }, '历史范围为所选 Bot 的私聊，包含历史分段。私有 Bot 也只有勾选后才会分享内容。'),
-      h('p', { className: 'bt-note' }, '明确下令后，任务进入目标 Bot 当前私聊，忙碌时排队。Bot 使用其现有工具、权限及审批设置。'),
-      h('p', { className: 'bt-note' }, '保存会停止当前语音会话，重新开始后生效。已派发任务继续在 Bot 中处理。'),
+      bots.length ? h('div', { className: 'bt-moss-profile-roster', role: 'list', 'aria-label': 'MOSS Profile 与 Bot' }, bots.map(bot => {
+        const profile = profiles.find(item => item.botId === bot.id)
+        return h('button', { key: bot.id, type: 'button', className: `bt-moss-profile-row${bot.id === selectedBotId ? ' is-selected' : ''}`, 'data-moss-profile-bot': bot.id, disabled: busy, onClick: () => chooseBot(bot.id) },
+          h('span', null, h('strong', null, bot.name), bot.private ? h('small', { className: 'bt-note' }, ' · 私有') : null),
+          h('small', { className: bot.unavailable ? 'bt-error' : 'bt-note' }, bot.unavailable ? 'Bot 不可用' : profile ? `已绑定 · ${profile.name}` : '未绑定'))
+      })) : h('p', { className: 'bt-note' }, '还没有 Bot，请先从侧栏创建 Bot。'),
+      selectedBot ? h('section', { className: 'bt-moss-profile-editor', 'data-moss-profile-editor': selectedBot.id },
+        h('div', { className: 'bt-moss-card-heading' }, h('strong', null, `${selectedBot.name} 的 MOSS Profile`), selectedBotProfile ? h('small', { className: 'bt-note' }, selectedBotProfile.id) : null),
+        selectedBot.unavailable ? h('p', { className: 'bt-error', role: 'status' }, 'Bot 不可用。Profile 已保留，不会自动绑定其他 Bot。') : selectedBotProfile ? h('div', null,
+          h('label', { className: 'bt-phone-field' }, h('span', null, 'Profile 名称'), h('input', { className: 'bt-input', value: selectedBotProfile.name, disabled: busy, onInput: event => changeProfile('name', event.target.value) })),
+          h('div', { className: 'bt-moss-profile-voice' },
+            h('label', { className: 'bt-phone-field' }, h('span', null, '音色（当前 Profile）'), h('select', { className: 'bt-input', 'data-moss-profile-field': 'voiceName', value: profileVoice, disabled: busy, onChange: event => { onStopVoicePreview?.(); changeProfile('voiceName', event.target.value) } }, profileVoiceOptions.map(option => h('option', { key: option.value || 'default', value: option.value }, option.label)))),
+            h('div', { className: 'bt-moss-voice-actions' },
+              h('button', { type: 'button', className: 'bt-soft bt-soft-sm', 'data-moss-profile-preview': profileVoice, disabled: !profileVoice || voicesBusy || previewStatus === 'loading' || typeof previewVoiceSample !== 'function', onClick: () => previewVoiceSample(profileVoice) }, previewVoice === profileVoice && previewStatus === 'loading' ? '生成试听…' : previewVoice === profileVoice && previewStatus === 'playing' ? '停止试听' : '试听'),
+              h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: voicesBusy || busy || typeof onRefreshVoices !== 'function', onClick: onRefreshVoices }, voicesBusy ? '刷新中…' : '刷新音色')),
+            voicesError ? h('p', { className: 'bt-error', role: 'alert' }, voicesError) : null,
+            h('p', { className: 'bt-note' }, '音色只对当前 Profile 生效，试听会调用 MOSS 语音合成服务并按其规则计费。')),
+          h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', 'data-moss-profile-permission': 'readHistory', checked: selectedBotProfile.readHistory === true, disabled: busy, onChange: event => changeProfile('readHistory', event.target.checked) }), '读取历史'),
+          h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', 'data-moss-profile-permission': 'submitTasks', checked: selectedBotProfile.submitTasks === true, disabled: busy, onChange: event => changeProfile('submitTasks', event.target.checked) }), '派发任务')) : h('button', { type: 'button', className: 'bt-soft', 'data-moss-profile-create': true, disabled: busy, onClick: createProfile }, '创建 MOSS Profile')) : null,
+      h('p', { className: 'bt-note' }, '历史范围为当前 Profile 对应 Bot 的私聊。明确下令后，任务进入该 Bot 当前私聊，并沿用 Bot 原有工具、权限和审批。'),
+      h('p', { className: 'bt-note' }, '保存会停止当前语音会话，重新开始后使用新的 Profile。'),
       h('button', { type: 'button', className: 'bt-soft', 'data-moss-dsbot-save': true, disabled: busy, onClick: onSave }, '保存接入设置')),
     (view.tasks?.length || view.reads?.length || view.deliveryError) ? h('section', { className: 'bt-phone-card' },
       h('h3', null, 'DS Bot 任务与查询'),
@@ -418,6 +454,96 @@ function MossDsBotPanel({ config = { enabled: false, bots: [] }, view = {}, busy
         (read.snippets ?? []).map((snippet, index) => h('p', { key: index }, h('small', { className: 'bt-note' }, `分段 ${snippet.part} · #${snippet.seq} · ${new Date(snippet.time).toLocaleString()}`), h('br'), snippet.text)),
         read.truncated || read.partial ? h('p', { className: 'bt-note' }, read.partial ? '部分历史未能读取，仅展示已取得的片段。' : '仅展示相关片段，内容已截取。') : null,
         open(read.botId))))) : null)
+}
+
+export function MossLiveCaptionPanel({ controller, onOpenSettings, ui }) {
+  const live = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const uiStore = ui ?? EMPTY_UI_STORE
+  const uiState = useSyncExternalStore(uiStore.subscribe, uiStore.getSnapshot)
+  const history = useRef(null)
+  const [followLatest, setFollowLatest] = useState(true)
+  const [tab, setTab] = useState('captions')
+  const [showHistory, setShowHistory] = useState(false)
+  const items = Array.isArray(live.transcript) ? live.transcript.filter(item => item?.text) : []
+  const current = items.at(-1)
+  const historyItems = current ? items.slice(0, -1) : items
+  useEffect(() => {
+    if (!followLatest || !history.current) return
+    history.current.scrollTop = history.current.scrollHeight
+  }, [items.length, current?.text, followLatest])
+  const onScroll = event => {
+    const node = event.currentTarget
+    const atLatest = node.scrollHeight - node.scrollTop - node.clientHeight < 24
+    setFollowLatest(atLatest)
+  }
+  const ended = live.endedAt && !live.active && !live.busy
+  const idle = Boolean(live.boundProfile && !live.active && !ended)
+  const profile = live.boundProfile ?? {}
+  const memoryTurns = profile.memory?.turns?.length ?? 0
+  useEffect(() => { setShowHistory(false); setFollowLatest(true); setTab('captions') }, [live.profileId])
+  const openSettings = () => { controller.requestSettings?.(live.boundBotId); onOpenSettings?.(live.boundBotId) }
+  const dial = () => controller.start?.(live.profileId)
+  const newContext = () => controller.start?.(live.profileId, { resume: false })
+  const detailsOpen = uiState?.details !== null && uiState?.details !== undefined
+  useEffect(() => {
+    if (!live.visible || detailsOpen || typeof document === 'undefined') return undefined
+    const center = document.querySelector('[class*="_centerCol"]')
+    const panel = document.querySelector('[data-moss-caption-panel]')
+    if (!center || !panel) return undefined
+    const resize = () => {
+      const width = panel.getBoundingClientRect().width || 360
+      center.style.setProperty('margin-right', `${Math.ceil(width + 32)}px`, 'important')
+    }
+    resize()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null
+    observer?.observe(panel)
+    return () => {
+      observer?.disconnect()
+      center.style.removeProperty('margin-right')
+    }
+  }, [live.visible, detailsOpen])
+  if (!live.visible || detailsOpen) return null
+  return h('aside', { className: 'bt-moss-caption-panel', 'data-moss-caption-panel': true, 'data-moss-caption-tab': tab, 'aria-label': 'MOSS 实时字幕' },
+    h('nav', { className: 'bt-moss-caption-tabs', 'aria-label': '当前 Bot 页面' },
+      h('button', { type: 'button', className: tab === 'captions' ? 'is-active' : '', 'data-moss-caption-tab-button': 'captions', onClick: () => setTab('captions') }, 'MOSS 字幕'),
+      h('button', { type: 'button', className: tab === 'bot' ? 'is-active' : '', 'data-moss-caption-tab-button': 'bot', onClick: () => setTab('bot') }, 'Bot 聊天')),
+    h('header', { className: 'bt-moss-caption-head' },
+      h('div', null, h('strong', null, idle ? 'MOSS Live' : '实时字幕'), h('small', { role: 'status' }, ended ? '已挂断' : live.active ? '正在听' : idle ? '已绑定 · 未开始' : '等待开始')),
+      memoryTurns ? h('button', { type: 'button', 'data-moss-caption-history-toggle': true, 'aria-expanded': showHistory, onClick: () => setShowHistory(value => !value) }, showHistory ? '返回字幕' : '会话记录') : null,
+      onOpenSettings ? h('button', { type: 'button', className: 'bt-moss-caption-settings', 'data-moss-caption-settings': true, 'aria-label': '设置 MOSS Live', onClick: openSettings }, '⚙') : null),
+    showHistory
+      ? h('section', { className: 'bt-moss-caption-saved-history', 'data-moss-caption-saved-history': true, 'aria-label': 'MOSS 会话记录' },
+        [...(profile.memory?.turns ?? [])].reverse().map((turn, index) => h('details', { key: turn.id, open: index === 0 },
+          h('summary', null, turn.endedAt || turn.startedAt ? new Date(turn.endedAt || turn.startedAt).toLocaleString() : `会话 ${memoryTurns - index}`),
+          turn.truncated ? h('small', null, '此记录仅保留最近对话片段。') : null,
+          turn.items.map((item, at) => h('p', { key: at, 'data-moss-caption-speaker': item.kind }, h('small', null, item.kind === 'user' ? '你' : 'MOSS'), h('span', null, item.text))))))
+      : idle
+      ? h('section', { className: 'bt-moss-caption-idle', 'data-moss-caption-idle': true },
+        h('div', { className: 'bt-moss-caption-idle-orb', 'aria-hidden': true }),
+        h('strong', null, profile.name || '当前 MOSS Profile'),
+        h('p', null, `音色：${profile.voiceName || '默认音色'}`),
+        memoryTurns ? h('p', { className: 'bt-moss-caption-memory' }, profile.memory?.summary ? `上次对话：${profile.memory.summary}` : `已保存 ${memoryTurns} 次练习记录`) : null,
+        h('small', null, '点击“拨打”后才会申请麦克风并建立通话。'),
+        h('div', { className: 'bt-moss-caption-idle-actions' },
+          h('button', { type: 'button', className: 'bt-moss-caption-dial', 'data-moss-caption-dial': true, disabled: live.busy, onClick: dial }, live.busy ? '准备中…' : memoryTurns ? '继续练习' : '拨打'),
+          memoryTurns ? h('button', { type: 'button', className: 'bt-soft bt-moss-caption-new-context', 'data-moss-caption-new-context': true, disabled: live.busy, onClick: newContext }, '开始新会话') : null))
+      : [h('section', { key: 'current', className: 'bt-moss-caption-current', 'data-moss-caption-current': true, 'data-moss-caption-speaker': current?.kind ?? '', 'aria-live': 'polite' },
+        h('small', null, current?.kind === 'user' ? '你' : 'MOSS'),
+        h('strong', null, current?.text || '开始通话后，实时字幕会显示在这里。')),
+      h('div', { key: 'history', className: 'bt-moss-caption-history', ref: history, onScroll, 'data-moss-caption-transcript': true, role: 'log' },
+        historyItems.map((item, index) => h('p', { key: `${item.id ?? item.kind}-${index}`, 'data-moss-caption-speaker': item.kind },
+          h('small', null, item.kind === 'user' ? '你' : 'MOSS'), h('span', null, item.text))),
+        !followLatest && items.length ? h('button', { type: 'button', className: 'bt-moss-caption-latest', onClick: () => { setFollowLatest(true); if (history.current) history.current.scrollTop = history.current.scrollHeight } }, '回到最新') : null)],
+    live.memoryError ? h('div', { className: 'bt-moss-caption-memory-error', role: 'alert' }, live.memoryError,
+      items.length ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => downloadMossTranscript(items, { personaName: profile.name }, live.startedAt, live.endedAt) }, '导出记录') : null) : null,
+    h('footer', { className: 'bt-moss-caption-controls' },
+      h('span', null, idle ? '当前 Bot 的 MOSS Live' : '语音控制'),
+      live.screenStream ? h('button', { type: 'button', 'data-moss-caption-share-stop': true, disabled: live.screenBusy, onClick: controller.stopScreenShare }, '停止共享') : null,
+      live.active ? h('button', { type: 'button', 'data-moss-caption-mute': true, 'aria-pressed': live.muted === true, onClick: () => controller.setMuted(!live.muted) }, live.muted ? '取消静音' : '静音') : null,
+      onOpenSettings ? h('button', { type: 'button', 'data-moss-caption-settings-secondary': true, onClick: openSettings }, '设置') : null,
+      tab === 'bot' ? h('button', { type: 'button', onClick: () => setTab('captions') }, '返回 MOSS') : null,
+      ended && memoryTurns ? h('button', { type: 'button', 'data-moss-caption-new-context': true, disabled: live.busy, onClick: newContext }, '开始新会话') : null,
+      idle ? h('button', { type: 'button', className: 'bt-moss-caption-dial-secondary', onClick: dial, disabled: live.busy }, memoryTurns ? '继续练习' : '拨打') : ended ? h('button', { type: 'button', 'data-moss-caption-redial': true, disabled: live.busy, onClick: dial }, '重新拨打') : live.active ? h('button', { type: 'button', className: 'bt-moss-caption-end', 'data-moss-caption-end': true, onClick: () => controller.stop() }, '挂断') : null))
 }
 
 export function MossLiveSettings({ actions, controller }) {
@@ -527,6 +653,7 @@ export function MossLiveSettings({ actions, controller }) {
   const stopForConfig = async () => {
     if (owner.getSnapshot().visible || owner.getSnapshot().busy) await owner.stop({ quiet: true })
   }
+  const stopBeforeProfileChange = () => owner.getSnapshot().active || owner.getSnapshot().busy ? owner.stop({ quiet: true }) : undefined
   const saveConfig = () => run(async () => {
     await stopForConfig()
     const next = await actions.mossLiveUpdate({ config: draft })
@@ -535,11 +662,15 @@ export function MossLiveSettings({ actions, controller }) {
   }, '配置已保存')
   const saveDsBot = () => run(async () => {
     await stopForConfig()
-    const next = await actions.mossLiveUpdate({ config: { dsBot: draft.dsBot ?? { enabled: false, bots: [] } } })
-    dirty.current.delete('dsBot')
+    const next = await actions.mossLiveUpdate({ config: {
+      profiles: draft.profiles ?? [],
+      selectedProfileId: draft.selectedProfileId ?? '',
+      dsBot: draft.dsBot ?? { enabled: false, bots: [] },
+    } })
+    dirty.current.delete('dsBot'); dirty.current.delete('profiles'); dirty.current.delete('selectedProfileId')
     return next
   }, 'DS Bot 接入设置已保存，重新开始 MOSS Live 后生效')
-  const start = () => run(owner.start)
+  const start = () => run(() => owner.start(draft.selectedProfileId ?? ''))
   const stop = () => run(owner.stop)
   const startScreenShare = owner.startScreenShare
   const stopScreenShare = owner.stopScreenShare
@@ -551,7 +682,9 @@ export function MossLiveSettings({ actions, controller }) {
   const runtime = value?.runtime ?? { state: 'stopped' }
   const visualState = sessionState === 'greeting' ? 'greeting' : sessionState === 'speaking' ? 'speaking' : sessionState === 'thinking' ? 'thinking' : sessionState === 'listening' ? 'listening' : runtime.state
   const selectedScene = MOSS_SCENE_PRESETS.find(item => item.id === scene)
+  const profileSelectionRequired = (draft.profiles?.length ?? 0) > 0 && !draft.selectedProfileId
   const currentVoice = String(draft.voiceName ?? '').trim()
+  const hasProfiles = (draft.profiles?.length ?? 0) > 0
   const voiceOptions = [
     { id: '', name: '默认音色' },
     ...(currentVoice && !voices.some(item => item.id === currentVoice) ? [{ id: currentVoice, name: `当前音色（${currentVoice}）` }] : []),
@@ -566,28 +699,30 @@ export function MossLiveSettings({ actions, controller }) {
   const active = live.active
   return h('section', { className: 'bt-moss-live', 'aria-label': 'MOSS Live', 'aria-busy': busy },
     h('div', { className: 'bt-preset-heading' }, h('div', null, h('h2', null, 'MOSS Live'), h('p', null, '独立全双工实时语音会话，可按接入设置查询或调用 DS Bot。')),
-      active ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: stop }, '停止 MOSS Live') : h('button', { type: 'button', className: 'bt-soft', disabled: busy || !value?.apiKeyConfigured, onClick: start }, '开始 MOSS Live')),
+      active ? h('button', { type: 'button', className: 'bt-soft', disabled: busy, onClick: stop }, '停止 MOSS Live') : h('button', { type: 'button', className: 'bt-soft', disabled: busy || !value?.apiKeyConfigured || profileSelectionRequired, onClick: start }, '开始 MOSS Live')),
     h('section', { className: 'bt-moss-stage', 'data-state': visualState, style: { '--moss-level': String(Math.max(0, Math.min(1, level))) }, role: 'img', 'aria-label': `MOSS Live ${visualState}` },
       h('div', { className: 'bt-moss-orb', 'aria-hidden': true }, h('span', { className: 'bt-moss-orb-halo' }), h('span', { className: 'bt-moss-orb-core' }), h('span', { className: 'bt-moss-orb-ring' }), h('span', { className: 'bt-moss-orb-ring bt-moss-orb-ring-2' })),
       h('div', { className: 'bt-moss-stage-copy' }, h('strong', null, sessionState === 'idle' ? '等待开始' : sessionState === 'greeting' ? '开场问候' : sessionState === 'speaking' ? 'MOSS 正在说话' : sessionState === 'thinking' ? 'MOSS 正在思考' : sessionState === 'listening' ? '正在听你说' : `MOSS Live · ${runtime.state}`), h('span', null, `${levelSource === 'playback' ? '播放' : '输入'}音量 ${Math.round(level * 100)}%`))),
     h('div', { className: 'bt-plugin-report', role: 'status' }, h('strong', null, `运行状态：${runtime.state}`), h('p', null, `会话状态：${sessionState} · 麦克风音量：${Math.round(level * 100)}%`), h('p', null, `屏幕共享：${screenSharing ? '已开启' : '未开启'}`), value?.apiKeyConfigured ? h('p', null, 'API Key：已配置') : h('p', null, 'API Key：未配置')),
-    h(MossDsBotPanel, { config: draft.dsBot, view: value?.dsBot, busy, interpret: draft.mode === 'interpret',
-      onChange: next => { dirty.current.add('dsBot'); setDraft(current => ({ ...current, dsBot: next })) }, onSave: saveDsBot, onOpenBot: actions.mossLiveOpenBot }),
+    h(MossDsBotPanel, { config: draft, view: value?.dsBot, busy, interpret: draft.mode === 'interpret', voices, voicesBusy, voicesError, previewVoice, previewStatus, previewVoiceSample, onRefreshVoices: refreshVoices, onStopVoicePreview: stopVoicePreview,
+      onChange: next => { dirty.current.add('profiles'); dirty.current.add('selectedProfileId'); dirty.current.add('dsBot'); setDraft(current => ({ ...current, ...next })) }, onBeforeProfileChange: stopBeforeProfileChange, onSave: saveDsBot, onOpenBot: actions.mossLiveOpenBot }),
     h('section', { className: 'bt-phone-card' }, h('h3', null, '模型配置'),
       h('label', { className: 'bt-phone-field' }, h('span', null, '场景预设'), h('select', { className: 'bt-input', 'data-moss-live-scene': true, value: scene, onChange: event => { const nextScene = event.target.value; setScene(nextScene); const preset = MOSS_SCENE_PRESETS.find(item => item.id === nextScene); if (preset?.id !== 'custom') { dirty.current.add('instructions'); setDraft(current => ({ ...current, instructions: preset.instructions })) } } }, MOSS_SCENE_PRESETS.map(item => h('option', { key: item.id, value: item.id }, item.name)))),
       selectedScene?.id !== 'custom' ? h('p', { className: 'bt-note bt-moss-scene-note' }, selectedScene.instructions) : null,
       input('model', '模型 ID'),
       select('mode', '会话模式', [{ value: 'conversation', label: '实时对话' }, { value: 'interpret', label: '同声传译' }]),
-      h('div', { className: 'bt-moss-voice-picker' },
-        h('label', { className: 'bt-phone-field' }, h('span', null, '音色'), h('select', {
-          className: 'bt-input', 'data-moss-live-field': 'voiceName', value: currentVoice, onChange: event => { stopVoicePreview(); dirty.current.add('voiceName'); setDraft(current => ({ ...current, voiceName: event.target.value })) },
-        }, voiceOptions.map(voice => h('option', { key: voice.id || 'default', value: voice.id }, voice.name)))),
-        h('div', { className: 'bt-moss-voice-actions' },
-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm', 'data-moss-live-preview': currentVoice, disabled: !currentVoice || voicesBusy || previewStatus === 'loading' || typeof actions.mossLiveVoicePreview !== 'function', onClick: () => previewVoiceSample(currentVoice) }, previewStatus === 'loading' ? '生成试听…' : previewStatus === 'playing' ? '停止试听' : '试听'),
-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: voicesBusy || busy || typeof actions.mossLiveVoices !== 'function', onClick: refreshVoices }, voicesBusy ? '刷新中…' : '刷新音色')),
-        h('audio', { ref: voicePreview, preload: 'none', controls: true, hidden: !previewSource, 'aria-label': '音色试听播放器', onEnded: stopVoicePreview, onError: () => { if (voicePreview.current?.error) { setVoicesError('试听音频加载失败，请重新试听。'); setPreviewVoice(''); setPreviewStatus('idle') } } }),
-        h('p', { className: 'bt-note bt-moss-voice-billing' }, '试听会调用 MOSS 语音合成服务，并按其规则计费。'),
-        voicesError ? h('p', { className: 'bt-error', role: 'alert' }, voicesError) : null),
+      hasProfiles
+        ? h('p', { className: 'bt-note bt-moss-profile-voice-note' }, '音色已按 MOSS Profile 独立设置，请在上方当前 Bot 的 Profile 编辑器中选择和试听。')
+        : h('div', { className: 'bt-moss-voice-picker' },
+          h('label', { className: 'bt-phone-field' }, h('span', null, '默认音色（未绑定 Profile）'), h('select', {
+            className: 'bt-input', 'data-moss-live-field': 'voiceName', value: currentVoice, onChange: event => { stopVoicePreview(); dirty.current.add('voiceName'); setDraft(current => ({ ...current, voiceName: event.target.value })) },
+          }, voiceOptions.map(voice => h('option', { key: voice.id || 'default', value: voice.id }, voice.name)))),
+          h('div', { className: 'bt-moss-voice-actions' },
+            h('button', { type: 'button', className: 'bt-soft bt-soft-sm', 'data-moss-live-preview': currentVoice, disabled: !currentVoice || voicesBusy || previewStatus === 'loading' || typeof actions.mossLiveVoicePreview !== 'function', onClick: () => previewVoiceSample(currentVoice) }, previewStatus === 'loading' ? '生成试听…' : previewStatus === 'playing' ? '停止试听' : '试听'),
+            h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: voicesBusy || busy || typeof actions.mossLiveVoices !== 'function', onClick: refreshVoices }, voicesBusy ? '刷新中…' : '刷新音色')),
+          h('p', { className: 'bt-note bt-moss-voice-billing' }, '未绑定 Profile 时，音色作为新 Profile 的迁移默认值；试听会调用 MOSS 语音合成服务并按其规则计费。'),
+          voicesError ? h('p', { className: 'bt-error', role: 'alert' }, voicesError) : null),
+      h('audio', { ref: voicePreview, className: 'bt-moss-voice-audio', preload: 'none', controls: true, hidden: !previewSource, 'aria-label': '音色试听播放器', onEnded: stopVoicePreview, onError: () => { if (voicePreview.current?.error) { setVoicesError('试听音频加载失败，请重新试听。'); setPreviewVoice(''); setPreviewStatus('idle') } } }),
       select('mediaProfile', '媒体档位', [{ value: 'standard', label: '标准' }, { value: 'low', label: '低带宽' }]),
       input('sourceLanguage', '源语言（如 en）'), input('targetLanguage', '目标语言（如 zh）'),
       h('label', { className: 'bt-phone-check' }, h('input', { type: 'checkbox', checked: draft.bidirectional === true, onChange: event => { dirty.current.add('bidirectional'); setDraft(current => ({ ...current, bidirectional: event.target.checked })) } }), '启用双向翻译'),
@@ -668,8 +803,15 @@ export const PLUGIN_CSS = `
 .bt-moss-screen-preview{display:block;width:100%;max-height:360px;object-fit:contain;margin-top:12px;background:var(--bt-ink);border-radius:10px;border:1px solid var(--bt-line)}
 .bt-moss-screen-preview[hidden]{display:none}
 .bt-moss-dsbot-settings>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none}.bt-moss-dsbot-settings>summary:before{content:'›';font-size:20px;color:var(--bt-ink-2)}.bt-moss-dsbot-settings[open]>summary:before{transform:rotate(90deg)}.bt-moss-dsbot-settings>summary strong{flex:1}.bt-moss-dsbot-settings>summary::-webkit-details-marker{display:none}.bt-moss-dsbot-roster{max-height:240px;overflow:auto;border:1px solid var(--bt-line);border-radius:10px;padding:0 12px}.bt-moss-dsbot-row{display:grid;grid-template-columns:minmax(80px,1fr) auto auto;align-items:center;gap:10px;border-bottom:1px solid var(--bt-line)}.bt-moss-dsbot-row:last-child{border-bottom:0}.bt-moss-dsbot-row>span{overflow-wrap:anywhere;min-width:0}.bt-moss-dsbot-row .bt-phone-check{font-size:12px;white-space:nowrap}.bt-moss-dsbot-activity{max-height:420px;overflow:auto}.bt-moss-dsbot-task{padding:12px 0;border-top:1px solid var(--bt-line);overflow-wrap:anywhere}.bt-moss-dsbot-task:first-child{border-top:0}.bt-moss-dsbot-task p{white-space:pre-wrap;margin:8px 0}.bt-moss-dsbot-task summary{cursor:pointer;line-height:1.6;overflow-wrap:anywhere}.bt-moss-dsbot-task>details>summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.bt-moss-dsbot-task>details[open]>summary{display:block}.bt-moss-dsbot-task .bt-moss-card-heading{margin-bottom:6px}.bt-moss-dsbot-task .bt-moss-card-heading button{flex:none}@media(max-width:480px){.bt-moss-dsbot-row{grid-template-columns:minmax(0,1fr) auto}.bt-moss-dsbot-row>span{grid-column:1/-1;padding-top:8px}.bt-moss-dsbot-row .bt-phone-check{margin:0 0 10px}.bt-moss-dsbot-row .bt-phone-check:last-child{justify-self:end}}
+.bt-moss-profile-roster{display:grid;gap:8px;max-height:300px;overflow:auto;margin:12px 0}.bt-moss-profile-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:11px 12px;text-align:left;border:1px solid var(--bt-line);border-radius:10px;background:var(--bt-card);color:var(--bt-ink);font:inherit;cursor:pointer}.bt-moss-profile-row:hover,.bt-moss-profile-row.is-selected{border-color:var(--bt-accent);background:color-mix(in srgb,var(--bt-accent) 6%,var(--bt-card))}.bt-moss-profile-row>span{display:flex;flex-direction:column;gap:3px;min-width:0}.bt-moss-profile-row small{overflow-wrap:anywhere}.bt-moss-profile-editor{padding:12px;border:1px solid var(--bt-line);border-radius:10px;background:var(--bt-tag-bg)}.bt-moss-profile-editor .bt-phone-field{margin-top:0}.bt-moss-profile-editor .bt-phone-check:last-child{margin-bottom:0}.bt-moss-voice-audio{width:100%;height:36px}.bt-moss-voice-audio[hidden]{display:none}
 .bt-moss-voice-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.bt-moss-voice-picker>.bt-phone-field{min-width:0;margin:10px 0}.bt-moss-voice-actions{display:flex;gap:8px;padding-bottom:10px;white-space:nowrap}.bt-moss-voice-picker audio{grid-column:1/-1;width:100%;height:36px}.bt-moss-voice-picker audio[hidden]{display:none}.bt-moss-voice-picker>.bt-error,.bt-moss-voice-billing{grid-column:1/-1;margin:0}
 .bt-moss-stage{position:relative;display:flex;align-items:center;justify-content:center;gap:24px;min-height:210px;margin:16px 0 8px;padding:20px;border:1px solid var(--bt-line);border-radius:20px;overflow:hidden;background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-star) 30%,var(--bt-card)),var(--bt-card) 65%);--moss-level:0}.bt-moss-stage[data-state=ready],.bt-moss-stage[data-state=stopped]{opacity:.82}.bt-moss-stage[data-state=thinking]{background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-accent) 24%,var(--bt-card)),var(--bt-card) 65%)}.bt-moss-stage[data-state=speaking]{background:radial-gradient(circle at 35% 40%,color-mix(in srgb,var(--bt-accent) 30%,var(--bt-card)),var(--bt-card) 65%)}.bt-moss-orb{position:relative;width:150px;height:150px;flex:none;transform:scale(calc(1 + var(--moss-level) * .22));transition:transform .12s ease-out}.bt-moss-orb-halo,.bt-moss-orb-core,.bt-moss-orb-ring{position:absolute;inset:0;border-radius:50%}.bt-moss-orb-halo{inset:-18%;background:radial-gradient(circle,color-mix(in srgb,var(--bt-star) 42%,transparent),transparent 68%);filter:blur(10px);opacity:.72;animation:bt-moss-orb-breathe 7.5s ease-in-out infinite}.bt-moss-orb-core{background:radial-gradient(40% 38% at 64% 40%,color-mix(in srgb,var(--bt-star) 70%,transparent),transparent 70%),radial-gradient(46% 42% at 42% 68%,color-mix(in srgb,var(--bt-accent) 60%,transparent),transparent 72%),radial-gradient(120% 120% at 50% 50%,var(--bt-card) 0%,color-mix(in srgb,var(--bt-star) 65%,var(--bt-card)) 58%,color-mix(in srgb,var(--bt-accent) 72%,var(--bt-ink)) 100%);box-shadow:inset -16px -12px 30px color-mix(in srgb,var(--bt-ink) 18%,transparent),0 18px 40px color-mix(in srgb,var(--bt-accent) 20%,transparent);animation:bt-moss-orb-swirl 16s linear infinite}.bt-moss-orb-core:before,.bt-moss-orb-core:after{content:"";position:absolute;inset:12%;border-radius:50%;border:1px solid color-mix(in srgb,var(--bt-card) 18%,transparent);animation:bt-moss-orb-swirl 21s linear infinite reverse}.bt-moss-orb-ring{inset:-6%;border:1px solid color-mix(in srgb,var(--bt-card) 20%,transparent);animation:bt-moss-orb-breathe 5s ease-in-out infinite}.bt-moss-orb-ring-2{inset:-16%;border-color:color-mix(in srgb,var(--bt-card) 8%,transparent);animation:bt-moss-orb-pulse 2.4s ease-out infinite}.bt-moss-stage[data-state=speaking] .bt-moss-orb-core{animation-duration:4.2s}.bt-moss-stage[data-state=speaking] .bt-moss-orb-ring-2{border-color:color-mix(in srgb,var(--bt-card) 24%,transparent)}.bt-moss-stage[data-state=greeting] .bt-moss-orb-core{animation-duration:3.6s}.bt-moss-stage-copy{display:flex;flex-direction:column;gap:6px;min-width:150px}.bt-moss-stage-copy strong{font-size:16px}.bt-moss-stage-copy span{color:var(--bt-ink-2);font-size:12px}.bt-moss-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.bt-moss-card-heading h3{margin-bottom:0}.bt-moss-scene-note{margin:2px 0 10px;padding:8px 10px;background:var(--bt-tag-bg);border-radius:8px;color:var(--bt-ink-2)}
 @keyframes bt-moss-orb-breathe{0%,100%{transform:scale(.96);opacity:.68}50%{transform:scale(1.05);opacity:.92}}@keyframes bt-moss-orb-swirl{to{transform:rotate(360deg)}}@keyframes bt-moss-orb-pulse{0%{transform:scale(.92);opacity:0}30%{opacity:.72}100%{transform:scale(1.15);opacity:0}}
 @media (prefers-reduced-motion:reduce){.bt-moss-orb-halo,.bt-moss-orb-core,.bt-moss-orb-core:before,.bt-moss-orb-core:after,.bt-moss-orb-ring{animation:none}.bt-moss-orb{transition:none}}
+.bt-moss-caption-settings{display:grid;place-items:center;width:28px;height:28px;padding:0!important;border:1px solid var(--bt-line);border-radius:50%!important;background:var(--bt-card);font-size:14px!important}.bt-moss-caption-idle{display:flex;flex-direction:column;align-items:center;gap:8px;padding:28px 18px 24px;text-align:center;background:radial-gradient(circle at 50% 15%,color-mix(in srgb,var(--bt-accent) 10%,var(--bt-card)),var(--bt-card) 72%);border-bottom:1px solid var(--bt-line)}.bt-moss-caption-idle-orb{width:62px;height:62px;border-radius:50%;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--bt-star) 70%,var(--bt-card)),color-mix(in srgb,var(--bt-accent) 75%,var(--bt-ink)));box-shadow:inset -7px -7px 15px color-mix(in srgb,var(--bt-ink) 14%,transparent),0 8px 24px color-mix(in srgb,var(--bt-accent) 20%,transparent)}.bt-moss-caption-idle strong{font-size:14px}.bt-moss-caption-idle p{margin:0;color:var(--bt-ink-2);font-size:11px}.bt-moss-caption-idle small{color:var(--bt-ink-3);font-size:10px;line-height:1.5}.bt-moss-caption-dial,.bt-moss-caption-dial-secondary{border:1px solid var(--bt-accent)!important;background:var(--bt-accent)!important;color:var(--bt-accent-ink,var(--bt-card))!important}.bt-moss-caption-dial{min-width:150px;margin-top:6px;padding:9px 16px!important;border-radius:8px!important;font-size:11px!important;font-weight:600}.bt-moss-caption-dial:disabled,.bt-moss-caption-dial-secondary:disabled{opacity:.55;cursor:wait}.bt-moss-caption-panel[data-moss-caption-tab=bot] .bt-moss-caption-idle{display:none}
+.bt-moss-caption-panel{position:fixed;z-index:20;top:calc(var(--dsw-header-height,0px) + 12px);right:16px;bottom:16px;display:flex;flex-direction:column;width:min(360px,calc(100vw - 32px));overflow:hidden;background:var(--bt-card);border:1px solid var(--bt-line);border-radius:16px;box-shadow:var(--bt-shadow-3,0 8px 28px color-mix(in srgb,var(--bt-ink) 8%,transparent));color:var(--bt-ink)}.bt-moss-caption-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--bt-line)}.bt-moss-caption-head strong{display:block;font-size:12px}.bt-moss-caption-head small{display:block;margin-top:3px;color:var(--bt-green,var(--bt-ink-2));font-size:10px}.bt-moss-caption-head button{padding:5px 7px;border-radius:8px;color:var(--bt-ink-2);font-size:10px}.bt-moss-caption-current{padding:26px 18px 22px;text-align:center;background:color-mix(in srgb,var(--bt-accent) 5%,var(--bt-card));border-bottom:1px solid var(--bt-line)}.bt-moss-caption-current small{color:var(--bt-accent);font-size:10px}.bt-moss-caption-current strong{display:block;margin-top:10px;font-size:22px;line-height:1.45;font-weight:550}.bt-moss-caption-history{position:relative;min-height:0;flex:1;overflow:auto;padding:13px 14px}.bt-moss-caption-history p{display:flex;flex-direction:column;gap:3px;margin:0 0 13px;color:var(--bt-ink-2);font-size:11px;line-height:1.65}.bt-moss-caption-history p[data-moss-caption-speaker=user]{color:var(--bt-ink)}.bt-moss-caption-history p[data-moss-caption-speaker=assistant]{color:var(--bt-ink-2)}.bt-moss-caption-history p small{color:var(--bt-ink-3);font-size:9px}.bt-moss-caption-latest{position:sticky;bottom:2px;display:block;margin:0 auto;padding:6px 9px;border:1px solid var(--bt-line);border-radius:8px;background:var(--bt-card);color:var(--bt-accent);font-size:10px}.bt-moss-caption-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:9px 12px;border-top:1px solid var(--bt-line)}.bt-moss-caption-controls>span{margin-right:auto;color:var(--bt-ink-2);font-size:9px}.bt-moss-caption-controls button{padding:7px 8px;border:1px solid var(--bt-line);border-radius:8px;color:var(--bt-ink-2);font-size:9px}.bt-moss-caption-controls button[aria-pressed=true]{color:var(--bt-danger,var(--bt-ink));background:color-mix(in srgb,var(--bt-danger,var(--bt-ink)) 7%,var(--bt-card))}.bt-moss-caption-controls .bt-moss-caption-end{color:var(--bt-danger,var(--bt-ink));background:color-mix(in srgb,var(--bt-danger,var(--bt-ink)) 6%,var(--bt-card))}@media(max-width:760px){.bt-moss-caption-panel{top:64px;right:10px;bottom:10px;width:calc(100vw - 20px)}.bt-moss-caption-current strong{font-size:21px}.bt-moss-caption-controls{padding:9px 10px}}
+.bt-moss-caption-tabs{display:flex;gap:4px;padding:6px;border-bottom:1px solid var(--bt-line);background:var(--bt-tag-bg)}.bt-moss-caption-tabs button{flex:1;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-2);font-size:10px}.bt-moss-caption-tabs button.is-active{background:var(--bt-card);color:var(--bt-ink);font-weight:600}.bt-moss-caption-current[data-moss-caption-speaker=user] small,.bt-moss-caption-history p[data-moss-caption-speaker=user] small{color:var(--bt-accent)}.bt-moss-caption-current[data-moss-caption-speaker=assistant] small,.bt-moss-caption-history p[data-moss-caption-speaker=assistant] small{color:var(--bt-star,var(--bt-ink-2))}.bt-moss-caption-panel[data-moss-caption-tab=bot] .bt-moss-caption-head,.bt-moss-caption-panel[data-moss-caption-tab=bot] .bt-moss-caption-current,.bt-moss-caption-panel[data-moss-caption-tab=bot] .bt-moss-caption-history{display:none}
+.bt-moss-details{display:flex;flex-direction:column;gap:14px}.bt-moss-details-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.bt-moss-details-head strong{display:block;font-size:15px}.bt-moss-details-head small{display:block;margin-top:4px;color:var(--bt-ink-3);font-size:11px;line-height:16px}.bt-moss-details-head .bt-round{flex:none;width:30px;height:30px;border:0;border-radius:50%;background:var(--bt-hover);color:var(--bt-ink-2);cursor:pointer}.bt-moss-details-status{display:flex;flex-direction:column;align-items:center;gap:5px;padding:18px 12px;text-align:center;border:1px solid var(--bt-line);border-radius:16px;background:color-mix(in srgb,var(--bt-accent) 4%,var(--bt-card))}.bt-moss-details-status.is-active{background:color-mix(in srgb,var(--bt-green) 7%,var(--bt-card))}.bt-moss-details-status strong{font-size:13px}.bt-moss-details-status small{color:var(--bt-ink-2);font-size:11px;line-height:16px}.bt-moss-details-orb{width:46px;height:46px;border-radius:50%;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--bt-star) 55%,var(--bt-card)),color-mix(in srgb,var(--bt-accent) 75%,var(--bt-ink)));box-shadow:0 8px 22px color-mix(in srgb,var(--bt-accent) 18%,transparent)}.bt-moss-details-card{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid var(--bt-line);border-radius:12px;background:var(--bt-card)}.bt-moss-details-card>strong{font-size:12px}.bt-moss-details-card>p{margin:0;color:var(--bt-ink-2);font-size:11px;line-height:16px}.bt-moss-details-actions{display:flex;gap:7px;flex-wrap:wrap}.bt-moss-details-actions button{flex:1;min-width:90px}.bt-moss-details-primary{background:var(--bt-accent);border-color:var(--bt-accent);color:var(--bt-accent-ink,var(--bt-card))}.bt-moss-details-primary:hover{background:color-mix(in srgb,var(--bt-accent) 86%,var(--bt-ink))}.bt-moss-details-danger{color:var(--bt-danger);border-color:color-mix(in srgb,var(--bt-danger) 32%,var(--bt-line))}.bt-moss-details-kv{display:flex;justify-content:space-between;gap:10px;font-size:11px;line-height:16px}.bt-moss-details-kv span{color:var(--bt-ink-2)}.bt-moss-details-kv strong{max-width:60%;overflow-wrap:anywhere;text-align:right}.bt-moss-details-note{font-size:11px;color:var(--bt-ink-3);line-height:16px}.bt-moss-details-modal-backdrop{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:18px;background:color-mix(in srgb,var(--bt-ink) 22%,transparent)}.bt-moss-details-modal{width:min(500px,calc(100vw - 28px));max-height:calc(100vh - 32px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--bt-line-2);border-radius:16px;background:var(--bt-card);color:var(--bt-ink);box-shadow:0 20px 60px color-mix(in srgb,var(--bt-ink) 20%,transparent)}.bt-moss-details-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--bt-line)}.bt-moss-details-modal-head strong{font-size:15px}.bt-moss-details-modal-head p{margin:5px 0 0;color:var(--bt-ink-2);font-size:11px}.bt-moss-details-modal-body{overflow:auto;padding:16px 18px}.bt-moss-details-step{padding:9px 10px;background:var(--bt-tag-bg);border-radius:8px}.bt-moss-details-voice-actions{display:flex;align-items:center;gap:8px;margin:-3px 0 8px}.bt-moss-details-modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--bt-line)}.bt-success{color:var(--bt-green);font-size:12px}.bt-moss-details-modal .bt-phone-field{margin:10px 0}.bt-moss-details-modal .bt-phone-check{font-size:12px}@media(max-width:500px){.bt-moss-details-modal-backdrop{padding:8px}.bt-moss-details-modal{max-height:calc(100vh - 16px)}.bt-moss-details-modal-foot{padding:10px 12px}.bt-moss-details-modal-body{padding:12px}.bt-moss-details-modal-head{padding:12px 14px}}
+.bt-moss-caption-memory{max-width:290px;max-height:88px;overflow:auto;margin:0!important;padding:8px 10px;border:1px solid var(--bt-line);border-radius:10px;background:var(--bt-tag-bg);text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}.bt-moss-caption-idle-actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:6px}.bt-moss-caption-new-context{font-size:11px!important}
+.bt-moss-caption-saved-history{flex:1;min-height:0;overflow:auto;padding:12px 14px;font-size:12px}.bt-moss-caption-saved-history details{padding:10px 0;border-bottom:1px solid var(--bt-line)}.bt-moss-caption-saved-history summary{cursor:pointer;color:var(--bt-ink-2)}.bt-moss-caption-saved-history p{display:flex;flex-direction:column;gap:4px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.bt-moss-caption-saved-history small{font-size:10px;color:var(--bt-ink-3)}.bt-moss-caption-saved-history [data-moss-caption-speaker=user] small{color:var(--bt-accent)}.bt-moss-caption-saved-history [data-moss-caption-speaker=assistant] small{color:var(--bt-star,var(--bt-ink-2))}.bt-moss-caption-memory-error{padding:10px 14px;color:var(--bt-danger);font-size:12px;line-height:1.5}.bt-moss-caption-memory-error button{margin-top:6px}.bt-moss-caption-panel[data-moss-caption-tab=bot] .bt-moss-caption-saved-history{display:none}
 `

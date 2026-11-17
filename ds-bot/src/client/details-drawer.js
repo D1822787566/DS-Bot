@@ -16,6 +16,7 @@ import { useGlide, useMorph } from './motion.js'
 import { MemberApprovals, MemberState, StopMemberWork, StopRoomWork, useMemberWork, workState } from './member-status.js'
 import { canSetGoal, goalView, hasGoalAdmin } from './goal.js'
 import { PermissionPicker, presetDanger, presetName } from './permission-picker.js'
+import { MossLiveDetailsPanel } from './moss-live-details.js'
 import { t } from './i18n.js'
 
 function transcriptOf(list, id, name, hiddenTurns = []) {
@@ -30,7 +31,7 @@ function transcriptOf(list, id, name, hiddenTurns = []) {
   return lines.join('\n\n')
 }
 
-const TAB_LABELS = { details: 'Details', browser: 'Browser' }
+const TAB_LABELS = { details: 'Details', browser: 'Browser', moss: 'MOSS Live' }
 
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } }
 const shortUrl = url => String(url ?? '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/$/, '')
@@ -196,8 +197,16 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const owner = roster.byId[sessionId]
   const part = owner ? currentPart(owner) : sessionId
   const isMainBot = isMainOf(roster, owner?.id)
-  const [tab, setTab] = useState('details')
+  const [tab, setTab] = useState(startTab === 'moss' ? 'moss' : 'details')
   const room = roster.roomsById[sessionId]
+  useEffect(() => {
+    if (!owner || roster.pluginsEnabled === false || startTab === 'moss' || startTab === 'settings' || typeof actions.mossLive !== 'function') return undefined
+    let current = true
+    actions.mossLive().then(value => {
+      if (current && value?.config?.profiles?.some(profile => profile.botId === owner.id)) setTab('moss')
+    }).catch(() => {})
+    return () => { current = false }
+  }, [owner?.id, startTab, actions.mossLive])
   // The info pane swaps its overview for the Bot or group settings view in place.
   const [view, setView] = useState(startTab === 'settings' && (owner || room) ? 'settings' : 'overview')
   const [editing, setEditing] = useState(Boolean(startRenaming && (roster.byId[sessionId] || roster.roomsById[sessionId])))
@@ -268,7 +277,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   }
   const subtitle = bot ? bot.role : roomSubtitle(room, roster)
   // Tab sets: a 1:1 Bot has Details and Browser; a group has only Details, so no tab row.
-  const tabs = bot ? ['details', 'browser'] : ['details']
+  const tabs = bot ? ['details', 'browser', ...(roster.pluginsEnabled !== false && actions.mossLive ? ['moss'] : [])] : ['details']
   return [h(Fragment, { key: 'top' }, top),
     h('div', { key: 'id', className: 'bt-drawer-id', 'data-move': side },
       bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined), main: isMainBot, badge: false, gaze: true, pokeable: true })
@@ -306,5 +315,6 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
           h('div', { className: 'bt-kv' }, h('span', null, bot.name), h('span', null, usage))) : null,
         h(ScheduleSummary, { key: 'routines', bot, actions }),
       ] : null,
-      bot && tab === 'browser' ? h(BrowserCards, { bot, sessionId, roster, actions, useBrowserTabs, useBrowserPages }) : null)]
+      bot && tab === 'browser' ? h(BrowserCards, { bot, sessionId, roster, actions, useBrowserTabs, useBrowserPages }) : null,
+      bot && tab === 'moss' ? h(MossLiveDetailsPanel, { bot, actions, controller: actions.mossLiveController }) : null)]
 }

@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  低保真方向 B：歌词轨道。
+  假设：用户想要持续阅读多句字幕，当前句像歌词一样沿固定轨道向上推进。
+-->
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B · 歌词轨道</title><link rel="stylesheet" href="prototype.css"></head>
+<body>
+  <header class="preview-header"><strong>B · 歌词轨道</strong><p>连续向上推进，当前句有明确的演唱位置</p><nav class="direction-links"><a href="a-stage-theatre.html">A</a><a href="b-lyrics-ribbon.html" aria-current="page">B</a><a href="c-dual-pane.html">C</a><a href="index.html">总览</a></nav></header>
+  <div class="prototype-shell">
+    <aside class="sidebar"><div class="sidebar-heading"><strong>Bot</strong><span>3 个</span></div><button class="bot-row active"><span class="bot-avatar">英</span><span class="bot-row-copy"><b>英语教练</b><small>MOSS · 通话中</small></span><i class="moss-dot live"></i></button><button class="bot-row"><span class="bot-avatar">面</span><span class="bot-row-copy"><b>面试教练</b><small>MOSS · 已挂断</small></span><i class="moss-dot ended"></i></button><button class="bot-row"><span class="bot-avatar">日</span><span class="bot-row-copy"><b>日常助理</b><small>MOSS · 未开始</small></span><i class="moss-dot"></i></button><p class="sidebar-note">Bot 是长期身份。<br>MOSS 是它的语音入口。</p></aside>
+    <main class="main"><div class="main-heading"><div><h1>英语教练</h1><p>绑定 MOSS：英语陪练 · 正在通话</p></div><div class="heading-tools"><span class="pair-chip"><span class="orb"></span>英语陪练</span><button class="quiet-button">切换 Profile</button></div></div>
+      <div class="stage-scroll"><div class="stage-wrap"><h2>歌词式字幕</h2><p class="lead">字幕像歌词一样向上推进。你可以一直看到几句上下文，而不是只追一条滚动文本。</p><div class="demo-row"><span>原型操作</span><button data-advance>推进字幕</button><button data-reset>重新开始</button></div>
+        <section class="lyrics-card" aria-label="歌词式实时字幕"><div class="lyrics-head"><b>英语陪练 · 实时字幕</b><span data-lyrics-status>正在播放字幕</span></div><div class="lyrics-viewport"><div class="lyrics-track"><div class="lyrics-line past" data-line="0">Great. Let's make it a little more natural.</div><div class="lyrics-line current" data-line="1">Try saying the whole sentence one more time.</div><div class="lyrics-line future" data-line="2">好的，我再说一次。</div><div class="lyrics-line future" data-line="3">Take your time. I am listening.</div><div class="lyrics-line future" data-line="4">我明白了，最后几个词放慢一点。</div></div></div><div class="lyrics-foot"><span>00:12</span><span class="bar"><i></i></span><span>实时</span></div></section>
+        <p class="concept-note">方向 B 的重点是“连续阅读”。它最像歌词软件，字幕节奏感最强，但需要控制滚动速度和当前句定位。</p>
+      </div></div>
+      <div class="call-bar"><span class="orb"></span><div class="call-copy"><b>英语陪练</b><small>绑定 Bot：英语教练</small></div><div class="call-middle"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span>歌词轨道正在推进</span></div><div class="call-actions"><button>静音</button><button>返回 MOSS</button><button class="end">挂断</button></div></div>
+    </main>
+  </div>
+  <script>
+    const all=[['Great. Let\'s make it a little more natural.','Try saying the whole sentence one more time.','好的，我再说一次。','Take your time. I am listening.','我明白了，最后几个词放慢一点。'],['Try saying the whole sentence one more time.','好的，我再说一次。','Take your time. I am listening.','我明白了，最后几个词放慢一点。','That is the rhythm we want.'],['好的，我再说一次。','Take your time. I am listening.','我明白了，最后几个词放慢一点。','That is the rhythm we want.','Would you like to try it without looking?']]; let index=0;
+    function paint(){ const rows=document.querySelectorAll('[data-line]'); const set=all[index]; rows.forEach((row,i)=>{ row.textContent=set[i]; row.className='lyrics-line '+(i===0?'past':i===1?'current':'future'); }); }
+    document.querySelector('[data-advance]').onclick=()=>{ index=(index+1)%all.length; paint(); }; document.querySelector('[data-reset]').onclick=()=>{ index=0; paint(); document.querySelector('[data-lyrics-status]').textContent='正在播放字幕'; };
+  </script>
+</body></html>

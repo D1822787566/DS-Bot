@@ -19,6 +19,13 @@ export function buildMossSessionUrl({ port, token }) {
   return `ws://127.0.0.1:${Number(port)}/?token=${encodeURIComponent(String(token ?? ''))}`
 }
 
+export function mossProfileVoiceName(config = {}) {
+  const profiles = Array.isArray(config.profiles) ? config.profiles : []
+  const selectedId = config.selectedProfileId || profiles[0]?.id
+  const selected = profiles.find(profile => profile?.id === selectedId)
+  return String(selected?.voiceName ?? config.voiceName ?? '').trim()
+}
+
 export function mossSessionUpdatePayload(config = {}) {
   const persona = {
     name: String(config.personaName ?? '').trim(),
@@ -74,7 +81,9 @@ export function transcriptEvent(action, data = {}) {
 }
 
 export function mergeTranscriptEvent(items = [], next) {
-  if (!next?.kind || !String(next.text ?? '').trim()) return items
+  if (!next?.kind) return items
+  const empty = !String(next.text ?? '').trim()
+  if (empty && !(next.interrupted && next.id)) return items
   const value = { ...next, text: String(next.text), at: next.at ?? new Date().toISOString() }
   let index = -1
   if (value.id) index = items.findLastIndex?.(item => item.id === value.id) ?? [...items].map(item => item.id).lastIndexOf(value.id)
@@ -84,6 +93,8 @@ export function mergeTranscriptEvent(items = [], next) {
       if (!value.id && items[cursor].kind !== value.kind) break
     }
   }
+  if (empty && index < 0) return items
+  if (index >= 0 && items[index].interrupted === true) return items
   if (index >= 0 && items[index].done === true && value.done !== true) return items
   if (index < 0) return [...items, value]
   if (items[index].done === true && value.interrupted !== true && value.revised !== true && next.done === true) return items
@@ -373,17 +384,21 @@ export class MossAudioPlayer {
     const audio = ctx.createBuffer(1, view.length, SAMPLE_RATE)
     const channel = audio.getChannelData(0)
     for (let index = 0; index < view.length; index += 1) channel[index] = view[index] / 32768
-    const source = ctx.createBufferSource()
-    source.buffer = audio
-    source.connect(this.gain)
-    const startAt = Math.max(ctx.currentTime + 0.08, this.nextTime)
-    const item = { source, info, startAt, endAt: startAt + audio.duration, stopped: false }
+    const item = { audio, info, stopped: false }
     this.items.add(item)
+    this.playItem(item, Math.max(ctx.currentTime + 0.08, this.nextTime))
     this.nextTime = item.endAt
     this.monitorLevel()
+  }
+
+  playItem(item, startAt) {
+    const ctx = this.ctx
+    const source = ctx.createBufferSource()
+    source.buffer = item.audio
+    source.connect(this.gain)
+    Object.assign(item, { source, startAt, endAt: startAt + item.audio.duration })
     source.onended = () => {
-      if (item.stopped) return
-      this.items.delete(item)
+      if (item.stopped || item.source !== source || !this.items.delete(item)) return
       this.onChunkDone(item)
       if (this.items.size === 0) {
         this.stopLevelMonitor()
@@ -394,20 +409,40 @@ export class MossAudioPlayer {
     source.start(startAt)
   }
 
-  stop() {
+  stop(matches = null) {
     const now = this.ctx?.currentTime ?? 0
     let playedMs = 0
     let info = null
+    let changed = false
     for (const item of this.items) {
+      if (matches && !matches(item.info)) continue
+      changed = true
       item.stopped = true
+      this.items.delete(item)
       info ||= item.info
       if (now >= item.startAt && now <= item.endAt) { playedMs = Math.max(0, (now - item.startAt) * 1000); info = item.info ?? info }
       try { item.source.stop() } catch { /* already stopped */ }
+      // The browser may have finished this chunk before its onended task ran.
+      if (matches && now >= item.endAt) this.onChunkDone(item)
     }
-    this.items.clear()
-    this.stopLevelMonitor()
-    this.onLevel(0, 'playback')
-    if (this.ctx) this.nextTime = now
+    if (changed) {
+      let nextTime = now
+      for (const item of this.items) {
+        if (item.audio && item.startAt > now) {
+          const source = item.source
+          item.source = null
+          try { source.stop() } catch { /* already stopped */ }
+          this.playItem(item, Math.max(now + 0.08, nextTime))
+        }
+        nextTime = Math.max(nextTime, item.endAt ?? now)
+      }
+      this.nextTime = nextTime
+    }
+    if (!this.items.size) {
+      this.stopLevelMonitor()
+      this.onLevel(0, 'playback')
+      this.nextTime = now
+    }
     return { playedMs, info }
   }
 
@@ -510,20 +545,29 @@ export class MossLiveSession {
   }
 
   handleJson(raw) {
+    if (this.closePromise) return
     let message
     try { message = JSON.parse(raw) } catch { return }
     const action = message.action
     const data = message.data ?? {}
     this.onEvent({ type: action, data })
+    if (action === 'response.audio.stop' || action === 'response.interrupted') {
+      const reply = this.stopPlayback(data)
+      if (reply && action === 'response.interrupted') this.onTranscript(transcriptEvent(action, { ...data, run_id: reply.runId, turn_id: reply.turnId }))
+      return
+    }
+    const known = this.playbackReplies.get(replyKey(data.run_id, data.turn_id))
+    if ((known?.cancelled || known?.completed) && ['response.audio.started', 'response.audio.done', 'response.ended', 'output.transcript.updated'].includes(action)) return
+    if (known?.cancelled && action === 'output.transcript.done') return
     const transcript = transcriptEvent(action, data)
     if (transcript.kind) this.onTranscript(transcript)
     if (action === 'session_attached') {
       this.setState('attached')
       if (this.config.mode === 'interpret') {
         this.sendMediaConfiguration()
-      } else if (String(this.config.voiceName ?? '').trim()) {
+      } else if (mossProfileVoiceName(this.config)) {
         this.voiceChangePending = true
-        this.send({ action: 'change_voice', voice_name: String(this.config.voiceName).trim() })
+        this.send({ action: 'change_voice', voice_name: mossProfileVoiceName(this.config) })
       } else {
         this.sendSessionUpdate()
       }
@@ -543,27 +587,22 @@ export class MossLiveSession {
       this.setState('ready')
     } else if (action === 'input.speech.started') this.setState('listening')
     else if (action === 'input.speech.stopped') this.setState('thinking')
-    else if (action === 'response.audio.started') this.setState('speaking')
-    else if (action === 'response.audio.context') this.pendingInfo = { chunkId: data.chunk_id, runId: data.run_id, turnId: data.turn_id }
+    else if (action === 'response.audio.started') {
+      this.trackPlayback(data.run_id, data.turn_id)
+      this.setState('speaking')
+    }
+    else if (action === 'response.audio.context') {
+      this.trackPlayback(data.run_id, data.turn_id)
+      this.pendingInfo = { chunkId: data.chunk_id, runId: data.run_id, turnId: data.turn_id }
+    }
     else if (action === 'response.audio.done') {
-      const key = replyKey(data.run_id, data.turn_id)
-      if (key) {
-        this.playbackReplies.set(key, { ...this.playbackReplies.get(key), runId: data.run_id, turnId: data.turn_id, audioDone: true })
+      const reply = this.trackPlayback(data.run_id, data.turn_id)
+      if (reply) {
+        reply.audioDone = true
         this.completePlayback()
       }
     }
-    else if (action === 'response.audio.stop') {
-      for (const reply of this.playbackReplies.values()) reply.cancelled = true
-      const stopped = this.player.stop()
-      const info = stopped.info
-      const runId = data.run_id ?? info?.runId, turnId = data.turn_id ?? info?.turnId
-      const key = replyKey(runId, turnId)
-      if (key) {
-        this.playbackReplies.set(key, { runId, turnId, cancelled: true })
-        this.send({ action: 'playback.stopped', run_id: runId, turn_id: turnId, played_audio_ms: Math.round(stopped.playedMs) })
-      }
-      this.setState('listening')
-    } else if (action === 'response.ended') {
+    else if (action === 'response.ended') {
       if (this.player.items.size === 0) this.setState('ready')
       else this.setState('speaking')
     }
@@ -585,13 +624,56 @@ export class MossLiveSession {
     if (this.closePromise) return
     const info = this.pendingInfo
     this.pendingInfo = null
+    const reply = this.playbackReplies.get(replyKey(info?.runId, info?.turnId))
+    if (reply?.cancelled || reply?.completed) return
     this.player.enqueue(buffer, info)
+  }
+
+  trackPlayback(runId, turnId) {
+    const key = replyKey(runId, turnId)
+    if (!key) return null
+    if (!this.playbackReplies.has(key)) this.playbackReplies.set(key, { runId, turnId, chunks: new Set() })
+    return this.playbackReplies.get(key)
+  }
+
+  stopPlayback(data) {
+    // MOSS can serialize an omitted correlation field as an empty string. Treat
+    // that the same as an absent field while resolving a unique known reply;
+    // otherwise a valid run id cannot stop its only active turn.
+    const runFilter = typeof data.run_id === 'string' && data.run_id ? data.run_id : undefined
+    const turnFilter = typeof data.turn_id === 'string' && data.turn_id ? data.turn_id : undefined
+    let key = replyKey(runFilter, turnFilter)
+    if (!key) {
+      const candidates = new Map()
+      const known = [...this.playbackReplies.values(), ...[...this.player.items].map(item => item.info), this.pendingInfo]
+      for (const info of known) {
+        const candidate = replyKey(info?.runId, info?.turnId)
+        if (candidate && (runFilter === undefined || runFilter === info.runId) && (turnFilter === undefined || turnFilter === info.turnId)) candidates.set(candidate, info)
+      }
+      if (candidates.size === 1) key = candidates.keys().next().value
+    }
+    if (!key) {
+      this.onEvent({ type: 'ui.playback_unmatched', data: { run_id: data.run_id, turn_id: data.turn_id } })
+      return null
+    }
+    const [runId, turnId] = JSON.parse(key)
+    const reply = this.trackPlayback(runId, turnId)
+    if (reply.cancelled || reply.completed) return reply
+    const stopped = this.player.stop(info => replyKey(info?.runId, info?.turnId) === key)
+    reply.cancelled = true
+    if (!reply.completed) this.send({ action: 'playback.stopped', run_id: runId, turn_id: turnId, played_audio_ms: Math.round(stopped.playedMs) })
+    if (this.player.items.size) this.setState('speaking')
+    else if (this.state === 'speaking') this.setState('ready')
+    return reply
   }
 
   playbackChunkDone(item) {
     if (!item.info) return
     const info = item.info
     if (!replyKey(info.runId, info.turnId) || typeof info.chunkId !== 'string' || !info.chunkId) return
+    const reply = this.trackPlayback(info.runId, info.turnId)
+    if (reply.cancelled || reply.completed || reply.chunks.has(info.chunkId)) return
+    reply.chunks.add(info.chunkId)
     this.send({ action: 'playback.chunk.completed', chunk_id: info.chunkId, run_id: info.runId, turn_id: info.turnId })
     this.completePlayback()
   }

@@ -1,16 +1,35 @@
 import { createSource } from './sources.js'
 import { MossLiveSession, mergeTranscriptEvent, speakMossGreeting } from './moss-live.js'
 
-// One owner per client plugin instance. Views only subscribe; leaving a page
-// cannot release its microphone, upstream connection, or in-flight Bot results.
+// One owner per client plugin instance. The Bot-page lifecycle ends its call;
+// mounting or unmounting a view alone does not own the microphone.
 export function createMossLiveController({ actions, createSession = options => new MossLiveSession(options), greet = speakMossGreeting } = {}) {
-  const source = createSource({ visible: false, active: false, busy: false, sessionState: 'idle', muted: false, level: 0, levelSource: 'mic', transcript: [], screenStream: null, screenBusy: false, screenError: '', startedAt: '', endedAt: '', error: '', message: '' })
+  const source = createSource({ visible: false, active: false, busy: false, sessionState: 'idle', muted: false, level: 0, levelSource: 'mic', transcript: [], screenStream: null, screenBusy: false, screenError: '', startedAt: '', endedAt: '', error: '', memoryError: '', message: '', profileId: '', boundBotId: '', boundProfile: null, recordId: '' })
   const patch = update => source.set(state => ({ ...state, ...update }))
-  let session = null, generation = 0, disposed = false, starting = null, stopping = null, greetingAbort = null, greetingActive = false
+  let session = null, generation = 0, disposed = false, starting = null, stopping = null, greetingAbort = null, greetingActive = false, settingsRequestId = 0
+  let recording = null, memoryWrites = Promise.resolve()
+  let bindingResolver = async () => null
   const cancelGreeting = () => {
     greetingActive = false
     greetingAbort?.abort()
     try { globalThis.window?.speechSynthesis?.cancel?.() } catch { /* system speech is optional */ }
+  }
+  const saveMemory = (snapshot, record = recording) => {
+    if (!record || !snapshot.profileId || !snapshot.transcript?.length || typeof actions.mossLiveMemorySave !== 'function') return memoryWrites
+    const payload = { profileId: snapshot.profileId, recordId: record.id, resume: record.resume, startedAt: snapshot.startedAt, endedAt: snapshot.endedAt, transcript: snapshot.transcript }
+    const stamp = JSON.stringify(payload)
+    memoryWrites = memoryWrites.then(async () => {
+      if (record.saved === stamp) return
+      try {
+        const saved = await actions.mossLiveMemorySave(payload)
+        record.saved = stamp
+        const profile = saved?.config?.profiles?.find(item => item.id === payload.profileId)
+        if (source.getSnapshot().recordId === record.id) patch({ ...(profile ? { boundProfile: profile } : {}), memoryError: '' })
+      } catch {
+        if (source.getSnapshot().recordId === record.id) patch({ memoryError: '会话记录保存失败，当前字幕仍保留，请先导出记录后重试。' })
+      }
+    })
+    return memoryWrites
   }
   const valid = id => !disposed && id === generation
   const stop = ({ quiet = false, hide = false } = {}) => {
@@ -23,7 +42,9 @@ export function createMossLiveController({ actions, createSession = options => n
     patch({ active: false, busy: true, sessionState: 'stopped', muted: false, level: 0, screenStream: null, screenBusy: false, screenError: '', endedAt: new Date().toISOString(), error: '', message: '' })
     const pendingStart = starting
     stopping = (async () => {
-      const results = await Promise.allSettled([current?.stop(), actions.mossLiveStop?.()])
+      const snapshot = source.getSnapshot()
+      // Release live media immediately, even if saving the transcript is slow.
+      const results = await Promise.allSettled([current?.stop(), actions.mossLiveStop?.(), saveMemory(snapshot)])
       // A late Host start must be closed before another start is allowed.
       await pendingStart
       if (id === generation) {
@@ -34,10 +55,10 @@ export function createMossLiveController({ actions, createSession = options => n
     })().finally(() => { stopping = null })
     return stopping
   }
-  const start = () => {
+  const start = (profileId = '', { resume = true } = {}) => {
     if (disposed) return Promise.resolve(null)
     if (starting) return starting
-    if (stopping) return stopping.then(start)
+    if (stopping) return stopping.then(() => start(profileId, { resume }))
     if (source.getSnapshot().active) return Promise.resolve(null)
     const id = ++generation
     patch({ visible: true, active: true, busy: true, sessionState: 'connecting', muted: false, error: '', message: '', screenError: '' })
@@ -47,12 +68,16 @@ export function createMossLiveController({ actions, createSession = options => n
         session = null
         cancelGreeting()
         await previous?.stop()
+        await memoryWrites
         await actions.mossLiveStop?.()
         if (!valid(id)) return null
-        const next = await actions.mossLiveStart()
+        const next = await actions.mossLiveStart(profileId ? { profileId, resume } : { resume })
         if (!valid(id)) { await actions.mossLiveStop?.(); return null }
         if (!next?.runtime?.port || !next?.runtime?.token) throw new Error('MOSS Live relay is not ready')
-        patch({ startedAt: new Date().toISOString(), endedAt: '', transcript: [], level: 0, screenStream: null })
+        const activeProfile = next.config?.profiles?.find(profile => profile.id === (profileId || next.config?.selectedProfileId))
+        const activeRecording = { id: globalThis.crypto.randomUUID(), resume }
+        recording = activeRecording
+        patch({ startedAt: new Date().toISOString(), endedAt: '', transcript: [], level: 0, screenStream: null, profileId: activeProfile?.id ?? profileId ?? next.config?.selectedProfileId ?? '', boundBotId: activeProfile?.botId ?? '', boundProfile: activeProfile ?? source.getSnapshot().boundProfile ?? null, recordId: activeRecording.id })
         greetingAbort = new AbortController()
         greetingActive = next.config?.greetingEnabled !== false
         const current = createSession({
@@ -60,12 +85,17 @@ export function createMossLiveController({ actions, createSession = options => n
           onState: state => {
             if (session !== current || !valid(id)) return
             const terminal = ['closed', 'error', 'stopped'].includes(state)
-            if (terminal) cancelGreeting()
+            if (terminal) {
+              cancelGreeting()
+              void saveMemory({ ...source.getSnapshot(), endedAt: new Date().toISOString() }, activeRecording)
+            }
             patch({ sessionState: !terminal && greetingActive && source.getSnapshot().sessionState === 'greeting' ? 'greeting' : state, ...(terminal ? { active: false, level: 0, endedAt: new Date().toISOString(), screenStream: null } : {}) })
           },
           onLevel: (level, levelSource = 'mic') => { if (session === current && valid(id)) patch({ level, levelSource }) },
           onTranscript: item => {
-            if (session === current && valid(id)) source.set(state => ({ ...state, transcript: mergeTranscriptEvent(state.transcript, { ...item, at: new Date().toISOString() }) }))
+            if (session !== current || !valid(id)) return
+            source.set(state => ({ ...state, transcript: mergeTranscriptEvent(state.transcript, { ...item, at: new Date().toISOString() }) }))
+            if (item.done === true || item.revised === true) void saveMemory(source.getSnapshot(), activeRecording)
           },
           onScreenStream: screenStream => { if (session === current && valid(id)) patch({ screenStream }) },
           onEvent: event => {
@@ -114,6 +144,28 @@ export function createMossLiveController({ actions, createSession = options => n
   }
   return {
     getSnapshot: source.getSnapshot, subscribe: source.subscribe, start, stop,
+    requestSettings(botId) {
+      if (botId) patch({ settingsRequest: { id: ++settingsRequestId, botId } })
+    },
+    consumeSettingsRequest(id) {
+      if (source.getSnapshot().settingsRequest?.id === id) patch({ settingsRequest: null })
+    },
+    setBoundProfile(profile) {
+      const next = profile && profile.botId ? { ...profile } : null
+      const previous = source.getSnapshot()
+      const changedBinding = previous.boundBotId !== (next?.botId ?? '')
+      patch({
+        visible: Boolean(next),
+        boundBotId: next?.botId ?? '',
+        profileId: next?.id ?? '',
+        boundProfile: next,
+        ...(changedBinding ? { transcript: [], endedAt: '', error: '', memoryError: '', message: '', startedAt: '', recordId: '' } : {}),
+      })
+    },
+    setBindingResolver(resolver) {
+      bindingResolver = typeof resolver === 'function' ? resolver : async () => null
+    },
+    refreshBinding(force = true) { return bindingResolver(force) },
     clearFeedback: () => patch({ error: '', message: '' }),
     setMuted(muted) {
       if (!source.getSnapshot().active) return
@@ -125,14 +177,43 @@ export function createMossLiveController({ actions, createSession = options => n
   }
 }
 
-export function bindMossLiveLifecycle(controller, { roster, events = globalThis.window }) {
+export function bindMossLiveLifecycle(controller, { roster, currentBotId, currentBotSource, resolveBinding, events = globalThis.window }) {
+  let released = false
+  let token = 0
+  let lastCurrent = Symbol('unresolved')
+  const currentOf = () => typeof currentBotId === 'function' ? currentBotId() : undefined
+  const refreshBinding = async (force = false) => {
+    const current = currentOf()
+    if (!force && current === lastCurrent) return null
+    lastCurrent = current
+    const request = ++token
+    if (current === undefined || current === null || typeof resolveBinding !== 'function') {
+      if (current === undefined || current === null) controller.setBoundProfile?.(null)
+      return null
+    }
+    try {
+      const profile = await resolveBinding(current)
+      if (released || request !== token || currentOf() !== current) return null
+      controller.setBoundProfile?.(profile?.botId === current ? profile : null)
+      return profile
+    } catch {
+      if (!released && request === token && currentOf() === current) controller.setBoundProfile?.(null)
+      return null
+    }
+  }
+  controller.setBindingResolver?.(refreshBinding)
   const sync = () => {
     const live = controller.getSnapshot()
+    const current = currentOf()
+    const leftBoundBot = live.active && live.boundBotId && current !== undefined && current !== live.boundBotId
     if (roster.getSnapshot().pluginsEnabled === false && (live.visible || live.busy)) void controller.stop({ quiet: true, hide: true })
+    else if (leftBoundBot) void controller.stop({ quiet: true, hide: true }).then(() => refreshBinding(true))
+    else void refreshBinding()
   }
   const off = roster.subscribe(sync)
+  const offCurrent = currentBotSource?.subscribe?.(sync)
   const unload = () => { void controller.dispose() }
   events?.addEventListener('pagehide', unload)
   sync()
-  return () => { off(); events?.removeEventListener('pagehide', unload); return controller.dispose() }
+  return () => { released = true; token++; off(); offCurrent?.(); events?.removeEventListener('pagehide', unload); return controller.dispose() }
 }
