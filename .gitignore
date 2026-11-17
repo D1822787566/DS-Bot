@@ -34,5 +34,6 @@ node_modules/
 /.env
 /docker-compose.override.yml
 
-# Bytecode from the record-browser-gif encoder's local media tests.
+# Python bytecode and test caches.
 __pycache__/
+.pytest_cache/

@@ -465,7 +465,7 @@ Chief · 整理会议待办             排队中 / 执行中 / 已完成
 ### 14.9 2026-11-17 验证记录与未完成验收
 
 - `[代码证据]` 本地回归覆盖 Profile 隔离、同一通话检查点、重载和旧设置保存、新练习隔离、Unicode 边界、保存失败与媒体清理，以及通过真实本地 WebSocket relay 将记忆发送到上游。异步桥接覆盖静默等待、重复回执、权限撤销和迟到结果隔离。
-- `[代码证据]` `npm test`：1852 项，1851 通过、1 跳过、0 失败；`npm run build` 和 `npm run lint` 成功（lint 仅既有警告）；模块记忆检查通过。测试记录位于本机 `.ds-bot-local/moss-memory-full-test-20261117.log`。
+- `[代码证据]` `npm test`：1852 项，1851 通过、1 跳过、0 失败；`npm run build` 和 `npm run lint` 成功（lint 仅既有警告）；模块记忆检查通过。测试记录位于本机 `.ds-bot-local/diagnostics/logs/moss-memory-full-test-20261117.log`。
 - `[代码证据]` 真实 MOSS API 最终验证使用中文合成语音和模拟 Bot：先完成普通算术问答，再由 MOSS 调用 `dsbot_list_bots` 和 `dsbot_submit_task`，任务只派发一次；正常回合的字幕、音频和播放回执有效。Bot 执行过程延迟 70 秒，期间只持续上传静音、不再说话；不操作用户真实 Bot、不采集真人麦克风。
 - `[代码证据]` 2026-11-17 直接连接官方 MOSS API 的最小测试确认：会话级 `session.commentary.append` 省略 `delegation_id` 或传 `null` 都收到 `session.commentary.appended`；虚构字符串委派 ID 返回 `unknown_delegation_id`。因此当前省略委派 ID 不是已证实的错误修复点。
 - `[代码证据]` 2026-11-17 官方 `@mossai/mosslive@0.1.0` 浏览器示例要求音频 context 的 `run_id`、`turn_id`、`chunk_id` 有效并按 `run_id` 维护播放 ledger；它不能处理当前主动播报返回的全空标识。该参考包与官网文档一致，进一步支持将空标识记录为 MOSS 主动播报协议异常。

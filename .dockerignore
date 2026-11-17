@@ -3,6 +3,10 @@
 ds-bot/dev/harness
 .dsh-test*
 .dsh-home
+.ds-bot-local
+.playwright-mcp
+**/.pytest_cache
+**/__pycache__
 shots
 docs/images
 *.tgz

@@ -10,7 +10,7 @@ DO NOT send optional commentary
 
 涉及新功能、模块改造、架构、UI、交互、状态流转或安全边界时：
 
-1. 开始分析前先读取 `.agent/skills/module-evolution/SKILL.md`，再读取项目实际存在的项目记忆入口（当前为 `docs/project-memory/INDEX.md`）和受影响模块记录；如果目录已迁移为 `docs/module-memory/`，按 module-evolution Skill 的规则处理。
+1. 开始分析前先读取 `.agents/skills/module-evolution/SKILL.md`，再读取统一模块记忆入口 `docs/module-memory/INDEX.md` 和受影响模块记录。
 2. 先检查现有文档、源码、测试和配置，再判断是否需要创建或修改文档。
 3. 文档保存位置按对应 Skill 管理：开发文档、原型、探索记录和项目规划使用 `collaborative-development-brief` Skill；长期模块记忆使用 `module-evolution` Skill，不在本文件重复维护目录细节。
 4. 区分用户已确认的内容、Agent 的候选建议、待用户确认的问题，以及明确不属于本次范围的内容。
@@ -43,7 +43,7 @@ Set-Location E:\project_space\ds-bot-dfl
 
 - `app/src/main.mjs` 是 Electron 的应用主文件，不是用户启动命令。只有 `start.ps1` 或 `npm start` 间接调用它。
 - `npm --prefix app start` 只适用于已经完成插件构建和同步的临时开发场景，不能代替 `start.ps1` 做用户验收。
-- `.ds-bot-local/moss-preview-probe.mjs`、`.ds-bot-local/moss-dsbot-smoke.mjs`、`.ds-bot-local/moss-persistent-ui-launch.mjs` 等是诊断或自动化验证脚本，禁止作为用户验收的启动入口。它们可能使用隔离数据、模拟 MOSS、远程调试端口或未同步的安装副本。
+- `.ds-bot-local/diagnostics/tools/moss-preview-probe.mjs`、`.ds-bot-local/diagnostics/tools/moss-dsbot-smoke.mjs`、`.ds-bot-local/diagnostics/tools/moss-persistent-ui-launch.mjs` 等是诊断或自动化验证脚本，禁止作为用户验收的启动入口。它们可能使用隔离数据、模拟 MOSS、远程调试端口或未同步的安装副本。诊断材料分类位置见 `docs/README.md`，不要与正式数据混放。
 - `http://127.0.0.1:28941/` 是静态视觉原型服务器，不是 DS Bot Desktop。
 - `http://127.0.0.1:26814/` 是正式 Desktop 内部 Host 的临时 Web 地址，不能作为独立启动入口，也不能据此再开一个浏览器实例。
 

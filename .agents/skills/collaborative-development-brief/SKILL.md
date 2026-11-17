@@ -14,8 +14,8 @@ Guide a shared discovery and confirmation process. The development document is a
 Before analysis, read:
 
 1. `AGENTS.md`;
-2. `.agent/skills/module-evolution/SKILL.md`;
-3. the project's actual memory index (currently `docs/project-memory/INDEX.md`; use `docs/module-memory/INDEX.md` if that structure exists) and only the affected module records;
+2. `.agents/skills/module-evolution/SKILL.md`;
+3. `docs/module-memory/INDEX.md` and only the affected module records;
 4. related documents, source, tests, configuration, and scripts.
 
 Use the module-evolution skill's actual source and path rules. Treat confirmed module decisions as constraints, and treat proposals as candidates until the user confirms them.
@@ -118,7 +118,7 @@ Before creating a document, search for an existing document that can be updated.
 
 - `docs/development/<module>/` — formal development documents. Use `<feature>-development.md`; keep a draft at this path with `Draft` status and update it in place after confirmation.
 - `docs/prototypes/<module>/` — UI prototypes, interaction flows, state diagrams, and visual confirmation materials.
-- `docs/project-memory/` — durable module memory and confirmed long-term decisions.
+- `docs/module-memory/` — durable module memory and confirmed long-term decisions.
 - `experiments/` — exploratory, comparative, or unconfirmed investigations.
 - `planning/` — project-level roadmaps and backlog material.
 
