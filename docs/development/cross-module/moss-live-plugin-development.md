@@ -28,6 +28,8 @@ Confirmed / current-Bot MOSS sidebar, Profile voice settings, captions and Profi
 
 2026-11-17 用户要求重拨后直接看到过去的对话内容。已实现主字幕列表直接展示当前 Profile 的已保存历史，重拨时自动返回实时字幕视图并跟随最新记录；随后按用户要求通过 `start.ps1` 重启正式 Desktop，已核对加载本次构建，实际通话体验待用户复测。
 
+2026-11-18 用户确认上游 DS Bot 全量能力迁移，同时保留当前 MOSS 运行时和新入口。旧 Plugins 页面 MOSS tab 不再作为产品入口；已移除 tab 注册和跳转 action，并把屏幕共享开始按钮放入当前实时字幕侧栏。旧全页配置源码和测试待随迁移批次清理。
+
 ## 1. 目标与使用场景
 
 用户在 DS Bot 插件页配置 MOSS Live，并从同一页面启动一个独立的全双工实时语音会话。麦克风音频进入 MOSS Live，实时字幕和语音回复回到插件面板。该会话不创建 DS Bot Bot 回合，不读取 Bot 工具、记忆、权限或审批。

@@ -18,7 +18,7 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 const context = { module, exports: module.exports, require: () => React }
 runInNewContext(outputFiles[0].text, context)
-const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, MossLiveCaptionPanel, openPluginManager, openMossLiveSettings, voiceTestSummary } = module.exports
+const { BotPresets, PresetPicker, PhoneAgentSettings, MossLiveSettings, MossLiveCaptionPanel, openPluginManager, voiceTestSummary } = module.exports
 
 async function mount(t, component, props, configure = () => {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
@@ -267,6 +267,16 @@ test('MOSS caption panel keeps both speakers visible and owns voice controls', a
   assert.equal(document.querySelector('[data-moss-caption-pair]'), null)
 })
 
+test('MOSS caption panel keeps screen sharing start in the current sidebar', async t => {
+  const calls = []
+  const controller = createSource({ visible: true, active: true, busy: false, sessionState: 'ready', transcript: [], screenStream: null, screenBusy: false, screenError: '', endedAt: '' })
+  controller.startScreenShare = () => { calls.push('start-share'); return Promise.resolve() }
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  assert.ok(document.querySelector('[data-moss-caption-share-start]'))
+  await act(async () => document.querySelector('[data-moss-caption-share-start]').click())
+  assert.deepEqual(calls, ['start-share'])
+})
+
 test('bound MOSS caption panel shows an idle dial card and settings action before a call', async t => {
   const source = createSource({
     visible: true, active: false, busy: false, endedAt: '', boundBotId: 'bot-h', profileId: 'profile-h',
@@ -382,16 +392,6 @@ test('MOSS caption panel provides a narrow-window Bot chat tab without ending th
   assert.equal(controller.getSnapshot().active, true)
   await act(async () => document.querySelector('[data-moss-caption-tab-button="captions"]').click())
   assert.equal(document.querySelector('[data-moss-caption-panel]').dataset.mossCaptionTab, 'captions')
-})
-
-test('returning to MOSS selects its existing plugin tab without creating a voice session', async () => {
-  assert.equal(typeof openMossLiveSettings, 'function')
-  const calls = []
-  await openMossLiveSettings({ actions: { plugins: async () => calls.push('plugins') }, ui: { set() {} },
-    navigation: { openList: () => calls.push('list') },
-    slots: { entries: () => [{ options: { key: 'plugins' }, store: { create: () => ({ actions: { setTab: id => calls.push(id) } }) } }] },
-  })
-  assert.deepEqual(calls, ['plugins', 'list', 'ds-bot-moss-live'])
 })
 
 test('MOSS Live phase one exposes scene presets, greeting settings and the animated stage', async t => {

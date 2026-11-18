@@ -16333,13 +16333,6 @@ async function openPluginManager({ actions, ui: ui2, navigation }) {
   ui2.set((state) => ({ ...state, newChat: null, settings: null, details: null, menu: null, memory: null, voice: null, palette: null, exchange: null }));
   navigation.openList();
 }
-async function openMossLiveSettings({ actions, ui: ui2, navigation, slots }) {
-  await openPluginManager({ actions, ui: ui2, navigation });
-  const entry = slots.entries("main").find((item) => item.options?.key === "plugins");
-  const owner = entry?.store?.create?.();
-  if (typeof owner?.actions?.setTab !== "function") throw new Error("无法打开 MOSS Live 设置页。");
-  owner.actions.setTab("ds-bot-moss-live");
-}
 function BotPresets({ actions }) {
   const [catalog, setCatalog] = (0, import_react34.useState)(null);
   const [report, setReport] = (0, import_react34.useState)(null);
@@ -17150,6 +17143,7 @@ function MossLiveCaptionPanel({ controller, onOpenSettings, ui: ui2 }) {
       { className: "bt-moss-caption-controls" },
       (0, import_react34.createElement)("span", null, idle ? "当前 Bot 的 MOSS Live" : "语音控制"),
       live.screenStream ? (0, import_react34.createElement)("button", { type: "button", "data-moss-caption-share-stop": true, disabled: live.screenBusy, onClick: controller.stopScreenShare }, "停止共享") : null,
+      live.active && !live.screenStream ? (0, import_react34.createElement)("button", { type: "button", "data-moss-caption-share-start": true, disabled: live.screenBusy, onClick: controller.startScreenShare }, "共享屏幕") : null,
       live.active ? (0, import_react34.createElement)("button", { type: "button", "data-moss-caption-mute": true, "aria-pressed": live.muted === true, onClick: () => controller.setMuted(!live.muted) }, live.muted ? "取消静音" : "静音") : null,
       onOpenSettings ? (0, import_react34.createElement)("button", { type: "button", "data-moss-caption-settings-secondary": true, onClick: openSettings }, "设置") : null,
       tab === "bot" ? (0, import_react34.createElement)("button", { type: "button", onClick: () => setTab("captions") }, "返回 MOSS") : null,
@@ -25316,10 +25310,6 @@ function apply(ctx) {
       void release();
     };
   }, "ds-bot: MOSS Live owner");
-  actions.openMossLive = async () => {
-    if (surface.getSnapshot().mode !== "bot") actions.setSurface("bot");
-    await openMossLiveSettings({ actions, ui: ui2, slots: ctx.slots, navigation: ctx.get("pluginNavigation") });
-  };
   actions.openHarnessModels = () => {
     const step = (ctx.slots.entries?.("settings.onboarding") ?? []).some((entry) => entry.options?.id === MODELS_STEP);
     if (step) openHarnessOnboarding(MODELS_STEP);
@@ -25553,19 +25543,15 @@ function apply(ctx) {
   const installBotPresets = () => {
     let dispose = null;
     let disposePhone = null;
-    let disposeMoss = null;
     const sync = () => {
       if (roster.getSnapshot().pluginsEnabled !== false && !dispose) {
         dispose = shadow("plugins.tab", { id: "ds-bot-presets", order: 100, label: () => t("Bot presets"), inject: () => ({ actions }) }, BotPresets);
         disposePhone = shadow("plugins.tab", { id: "ds-bot-phone-agent", order: 110, label: () => t("Phone Agent"), inject: () => ({ actions }) }, PhoneAgentSettings);
-        disposeMoss = shadow("plugins.tab", { id: "ds-bot-moss-live", order: 120, label: () => t("MOSS Live"), inject: () => ({ actions, controller: mossLiveController }) }, MossLiveSettings);
       } else if (roster.getSnapshot().pluginsEnabled === false && dispose) {
         dispose();
         dispose = null;
         disposePhone?.();
         disposePhone = null;
-        disposeMoss?.();
-        disposeMoss = null;
       }
     };
     const off = roster.subscribe(sync);
@@ -25574,7 +25560,6 @@ function apply(ctx) {
       off();
       dispose?.();
       disposePhone?.();
-      disposeMoss?.();
     };
   };
   const installShell = () => [

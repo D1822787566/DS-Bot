@@ -55,15 +55,6 @@ export async function openPluginManager({ actions, ui, navigation }) {
   navigation.openList()
 }
 
-export async function openMossLiveSettings({ actions, ui, navigation, slots }) {
-  await openPluginManager({ actions, ui, navigation })
-  // This root registration returns its existing navigation-store instance.
-  const entry = slots.entries('main').find(item => item.options?.key === 'plugins')
-  const owner = entry?.store?.create?.()
-  if (typeof owner?.actions?.setTab !== 'function') throw new Error('无法打开 MOSS Live 设置页。')
-  owner.actions.setTab('ds-bot-moss-live')
-}
-
 // This is an additive tab in DSH's Plugins page. The native tabs keep their own UI.
 export function BotPresets({ actions }) {
   const [catalog, setCatalog] = useState(null)
@@ -540,6 +531,7 @@ export function MossLiveCaptionPanel({ controller, onOpenSettings, ui }) {
     h('footer', { className: 'bt-moss-caption-controls' },
       h('span', null, idle ? '当前 Bot 的 MOSS Live' : '语音控制'),
       live.screenStream ? h('button', { type: 'button', 'data-moss-caption-share-stop': true, disabled: live.screenBusy, onClick: controller.stopScreenShare }, '停止共享') : null,
+      live.active && !live.screenStream ? h('button', { type: 'button', 'data-moss-caption-share-start': true, disabled: live.screenBusy, onClick: controller.startScreenShare }, '共享屏幕') : null,
       live.active ? h('button', { type: 'button', 'data-moss-caption-mute': true, 'aria-pressed': live.muted === true, onClick: () => controller.setMuted(!live.muted) }, live.muted ? '取消静音' : '静音') : null,
       onOpenSettings ? h('button', { type: 'button', 'data-moss-caption-settings-secondary': true, onClick: openSettings }, '设置') : null,
       tab === 'bot' ? h('button', { type: 'button', onClick: () => setTab('captions') }, '返回 MOSS') : null,
