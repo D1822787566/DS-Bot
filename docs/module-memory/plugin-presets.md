@@ -1,7 +1,7 @@
 # 插件发现与 Bot 预设
 
 记录状态：Implemented MVP / ACCEPTANCE
-最近更新：2026-11-05
+最近更新：2026-11-18
 
 ## 模块目标
 
@@ -36,6 +36,8 @@
 
 ## 开发状态
 
+- [代码证据] 2026-11-18 上游 0.3.8 / DSH 0.2.2-rc.1 集成保留原生市场、预设选择、群成员与换段传递；修复隐藏预设影响 Local Agent 创建。全量插件回归通过，历史 StudyMate 2.0.3 核验仍属于 DSH 0.2.1-rc.5，不冒称新版重新验收；当前迁移记录见 [upstream-migration.md](upstream-migration.md)。
+
 - [代码证据] 已建立 Draft 和低保真原型，记录现有建会话、提示词、独立 profile 与公开 API 待核验项。
 - [代码证据] 已实现插件页面/公开服务封装、Main Bot 工具、新建预设选择、群成员及换段传递、失效恢复；未提交、发布或改动 DSH。
 - [代码证据] 原生页面改造后全量 unit：1648 通过、1 跳过、0 失败；构建、生成文件一致性与 lint 通过（lint 仍有既有警告）。此前 52/52 步独立 mock 冒烟、真实插件安装/群成员/重启/卸载恢复集成通过；当前 app profile 4/4 通过。
@@ -46,6 +48,6 @@
 
 ## 继续入口
 
-- [代码证据] 工作分支 feat/plugin-presets；origin 无 dev，用户后续替换的 AGENTS.md 不再要求旧分支流程。用户已有 AGENTS.md 和技能文件保持原样。
+- [代码证据] 插件预设原工作分支为 feat/plugin-presets；当前集成工作分支为 codex/upstream-0.3.8-migration。用户已有 AGENTS.md 和技能文件保持原样。
 - [待确认] 后续若要让 StudyMate 学习模式可绑定，需要另开 PTC 适配范围；不默认承诺。其他后续项：可靠预设来源归属、专用阅读端验证。
 - [代码证据] 文档校验入口：`python .agents/skills/module-evolution/scripts/check_memory.py`；产品验证计划见开发文档第 14 节。

@@ -1,16 +1,21 @@
-import { createElement as h, useId, useMemo, useRef, useState } from 'react'
+import { createElement as h, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTurnFacts } from './btw.js'
-import { editLines, lineDiff, proposalPlacement } from './learning-card-model.js'
+import { answerFailure, answerKeepsCard, editLines, lineDiff, proposalCards, proposalPlacement, withoutEntry } from './learning-card-model.js'
 import { currentPart } from './text.js'
 import { t } from './i18n.js'
 import { CheckIcon, MemoryIcon, PencilIcon } from './icons.js'
 import { spring, SPRING_TAP } from './motion.js'
 
+// One entry per proposal still waiting for another try, kept across remounts.
 const failedAnswers = new Map()
 
+// `proposal.outcome` set: an answered card, read-only and folded to one row (what
+// it was, how it ended, its name); the row opens the change.
 function ProposalCard({ proposal, initialError = '', onFailure, onResolved, actions }) {
+  const outcome = proposal.outcome
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(initialError)
+  const [open, setOpen] = useState(false)
   const busyRef = useRef(false)
   const titleId = useId()
   const answer = approve => {
@@ -20,9 +25,8 @@ function ProposalCard({ proposal, initialError = '', onFailure, onResolved, acti
     setError('')
     void Promise.resolve().then(() => actions.learningAnswer(proposal.id, approve))
       .then(() => onResolved(proposal.id), failure => {
-        const message = failure?.message ?? String(failure)
-        setError(message)
-        onFailure(proposal, message)
+        setError(failure?.message ?? String(failure))
+        onFailure(proposal, failure)
       })
       .finally(() => {
         busyRef.current = false
@@ -30,24 +34,36 @@ function ProposalCard({ proposal, initialError = '', onFailure, onResolved, acti
       })
   }
   const update = proposal.action === 'update'
+  const agents = proposal.kind === 'agents'
   const rows = useMemo(() => lineDiff(update ? proposal.previous?.content : '', proposal.content), [update, proposal.previous?.content, proposal.content])
-  if (proposal.kind === 'agents') {
-    const blocks = proposal.edits.map(edit => [
-      ...(edit.op === 'add' ? [] : editLines(edit.old)).map(line => ({ kind: 'removed', line })),
-      ...(edit.op === 'remove' ? [] : editLines(edit.text)).map(line => ({ kind: 'added', line })),
-    ])
-    return h('section', { className: 'bt-q bt-learning-card', role: 'group', 'aria-labelledby': titleId, 'aria-busy': busy },
-      h(ProposalHead, { titleId, icon: PencilIcon, title: t('AGENTS.md update') }),
-      h(FileBox, { name: 'AGENTS.md', path: proposal.folder, state: proposal.exists === false ? 'Added' : 'Modified', blocks }),
-      proposal.edits.map((edit, index) => edit.why ? h('p', { className: 'bt-learning-why', key: index }, edit.why) : null),
-      error ? h('div', { className: 'bt-learning-error', role: 'alert' }, error) : null,
-      h(ProposalFoot, { busy, answer }))
+  const change = agents
+    ? [
+      h(FileBox, { key: 'file', name: 'AGENTS.md', path: proposal.folder, state: proposal.exists === false ? 'Added' : 'Modified', blocks: proposal.edits.map(edit => [
+        ...(edit.op === 'add' ? [] : editLines(edit.old)).map(line => ({ kind: 'removed', line })),
+        ...(edit.op === 'remove' ? [] : editLines(edit.text)).map(line => ({ kind: 'added', line })),
+      ]) }),
+      ...proposal.edits.map((edit, index) => edit.why ? h('p', { className: 'bt-learning-why', key: `why-${index}` }, edit.why) : null),
+    ]
+    : [
+      h(FileBox, { key: 'file', name: 'SKILL.md', path: `skills/${proposal.name}`, state: update ? 'Updated' : 'Added', blocks: [rows] }),
+      proposal.why ? h('p', { className: 'bt-learning-why', key: 'why' }, proposal.why) : null,
+    ]
+  const kind = t(agents ? 'AGENTS.md update' : update ? 'Skill update' : 'New skill')
+  if (outcome) {
+    const what = agents ? proposal.folder : proposal.name
+    return h('section', { className: 'bt-q bt-q-settled bt-learning-card bt-learning-settled', role: 'group', 'aria-label': `${kind} · ${what}`, 'data-outcome': outcome },
+      h('button', { type: 'button', className: 'bt-learning-fold', 'aria-expanded': open, onClick: () => setOpen(!open) },
+        h('span', { className: 'bt-learning-icon', 'aria-hidden': true }, h(agents ? PencilIcon : MemoryIcon)),
+        h('span', { className: 'bt-learning-kind' }, kind),
+        h('span', { className: 'bt-learning-sum' }, `${t(outcome === 'approved' ? 'Approved' : 'Declined')} · ${what}`)),
+      open ? change : null)
   }
   const oldDetail = update && typeof proposal.previous?.description === 'string' && proposal.previous.description !== proposal.description ? proposal.previous.description : undefined
   return h('section', { className: 'bt-q bt-learning-card', role: 'group', 'aria-labelledby': titleId, 'aria-busy': busy },
-    h(ProposalHead, { titleId, title: proposal.name, kind: t(update ? 'Skill update' : 'New skill'), detail: proposal.description, oldDetail }),
-    h(FileBox, { name: 'SKILL.md', path: `skills/${proposal.name}`, state: update ? 'Updated' : 'Added', blocks: [rows] }),
-    proposal.why ? h('p', { className: 'bt-learning-why' }, proposal.why) : null,
+    agents
+      ? h(ProposalHead, { titleId, icon: PencilIcon, title: kind })
+      : h(ProposalHead, { titleId, title: proposal.name, kind, detail: proposal.description, oldDetail }),
+    change,
     error ? h('div', { className: 'bt-learning-error', role: 'alert' }, error) : null,
     h(ProposalFoot, { busy, answer }))
 }
@@ -106,31 +122,39 @@ function LearningProposals({ turn, dock, sessionId, useRoster, actions }) {
   const facts = useTurnFacts(sessionId, actions)
   const [failed, setFailed] = useState({})
   const bot = roster.byId?.[sessionId]
+  // A proposal answered in another window or turn takes its failure with it, so this map
+  // holds only the answers still waiting for another try (#1339).
+  const settledIds = (bot === undefined ? [] : roster.learningSettled?.[bot.id] ?? []).map(entry => entry.id)
+  useEffect(() => {
+    const gone = Object.keys(failed).filter(id => settledIds.includes(id))
+    if (gone.length === 0) return
+    for (const id of gone) failedAnswers.delete(id)
+    setFailed(current => gone.reduce((next, id) => withoutEntry(next, id), current))
+  }, [settledIds.join('|')])
   if (!bot || currentPart(bot) !== sessionId) return null
   const proposals = roster.learning?.[bot.id] ?? []
-  const visible = [...proposals]
-  for (const entry of Object.values(failed)) {
-    if (entry.proposal.botId === bot.id && !proposals.some(proposal => proposal.id === entry.proposal.id)) visible.push(entry.proposal)
-  }
-  for (const entry of failedAnswers.values()) {
-    if (entry.proposal.botId === bot.id && !proposals.some(proposal => proposal.id === entry.proposal.id)
-      && !visible.some(proposal => proposal.id === entry.proposal.id)) visible.push(entry.proposal)
-  }
+  // Answered cards stay in place, read-only; a waiting copy of the same card wins.
+  const settled = roster.learningSettled?.[bot.id] ?? []
+  const remembered = Object.fromEntries([...failedAnswers.values(), ...Object.values(failed)]
+    .filter(entry => entry.proposal.botId === bot.id)
+    .map(entry => [entry.proposal.id, entry]))
+  const visible = proposalCards({ proposals, settled, failures: remembered })
   const cards = visible.filter(proposal => {
     const placement = proposalPlacement(proposal, facts?.turns)
     return dock ? placement.kind === 'dock' : placement.kind === 'turn' && placement.turn === turn?.turn
   })
   if (cards.length === 0) return null
-  const onFailure = (proposal, error) => {
-    failedAnswers.set(proposal.id, { proposal, error })
-    setFailed(current => ({ ...current, [proposal.id]: { proposal, error } }))
+  // An answer the host no longer knows (`bot/stale`) drops the card: the proposal is gone,
+  // so a retry cannot work and leaving it up only pins a dead card. Every other failure —
+  // network, a host error, a skill of that name already existing — keeps it for another go.
+  const onFailure = (proposal, failure) => {
+    if (answerKeepsCard(failure)) failedAnswers.set(proposal.id, { proposal, error: failure?.message ?? String(failure) })
+    else failedAnswers.delete(proposal.id)
+    setFailed(current => answerFailure(current, proposal, failure))
   }
   const onResolved = id => setFailed(current => {
     failedAnswers.delete(id)
-    if (!(id in current)) return current
-    const next = { ...current }
-    delete next[id]
-    return next
+    return withoutEntry(current, id)
   })
   return h('div', { className: dock ? 'bt-learning-stack bt-learning-dock' : 'bt-learning-stack' }, cards.map(proposal => h('div', { className: 'bt-q-inline', key: proposal.id },
     h(ProposalCard, {
@@ -198,5 +222,12 @@ export const LEARNING_CSS = `
 .bt-learning-btn:active:not(:disabled){scale:.96}
 .bt-learning-btn:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.bt-learning-btn{transition:background-color .12s ease,opacity .12s ease}.bt-learning-btn:active:not(:disabled){scale:none}}
+.bt-learning-settled{gap:10px}
+.bt-learning-fold{display:flex;align-items:center;gap:10px;min-width:0;width:100%;margin:-4px 0;padding:4px 0;border:0;background:none;font:inherit;text-align:start;color:var(--bt-ink);cursor:pointer}
+.bt-learning-fold .bt-learning-icon{width:28px;height:28px;border-radius:8px}
+.bt-learning-fold .bt-learning-icon svg{width:16px;height:16px}
+.bt-learning-kind{flex:none;font-size:14px;line-height:20px;font-weight:600}
+.bt-learning-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px;color:var(--bt-ink-2)}
+.bt-learning-fold:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:8px}
 .bt-learning-error{font-size:12px;line-height:16px;color:var(--bt-danger)}
 `

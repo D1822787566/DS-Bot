@@ -10,7 +10,8 @@
 | `ds-bot/` | 核心 Bot 插件：聊天、群聊、记忆、工具、插件页及语音接入 | [插件说明](../ds-bot/README.md) |
 | `local-voice/` | 独立的本地语音插件，包含 Host 接入和 Python 运行时 | [插件配置](../local-voice/package.json)、[运行时说明](../local-voice/runtime/README.md) |
 | `browser-plugins/` | Bot 浏览器的 `refs`、`script`、`task` 三种后端及基准测试 | [浏览器插件说明](../browser-plugins/README.md) |
-| `mobile/` | iOS / Android 应用骨架；现有说明注明尚未连接桌面端 | [移动端说明](../mobile/README.md) |
+| `mobile/` | iOS / Android 客户端，通过加密配对连接桌面 Host | [移动端说明](../mobile/README.md) |
+| `link/` | 手机与 Host 的加密通信、配对协议及 Relay Server | [通信说明](../link/README.md) |
 | `docker/` | Docker 镜像、部署配置与部署测试 | [部署说明](../docker/README.md) |
 | `scripts/` | 仓库级工具，目前包含扫描脚本 | [扫描脚本](../scripts/scan.mjs) |
 | `start.ps1` | Windows 从当前源码启动正式 Desktop 的统一入口 | [源码启动说明](../app/README.md#run-from-source-windows) |

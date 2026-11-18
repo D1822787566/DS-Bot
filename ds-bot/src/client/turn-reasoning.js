@@ -25,7 +25,7 @@ const thinkingLive = step => step.status === 'running' && texts(step).length ===
 const texts = step => step.blocks.filter(block => block.kind === 'text' && block.text.trim() !== '')
 
 // Reasoning can open with a `<signature>` block meant for the model, not the
-// reader; DSH's chat hides it since 0.2.2-rc.1 and the Bot chat strips it the
+// reader; DSH's chat hides it since 0.2.1-rc.5 and the Bot chat strips it the
 // same way, keeping the raw record in the session.
 const visibleReasoning = text => {
   if (text[0] !== '<') return text
@@ -35,4 +35,10 @@ const visibleReasoning = text => {
   return end === -1 ? '' : text.slice(end + '</signature>'.length).replace(/^(\r?\n)+/, '')
 }
 
-const stepReasoning = step => step.blocks.filter(block => block.kind === 'reasoning').map(block => visibleReasoning(block.text)).join('\n').trim()
+// A local agent's own tool calls ride its reasoning as lines that start with
+// "▸ ". They show as activity rows of their step, not folded into the thought.
+const ACTIVITY = '▸ '
+const isActivity = line => line.startsWith(ACTIVITY)
+const reasoningText = step => step.blocks.filter(block => block.kind === 'reasoning').map(block => visibleReasoning(block.text)).join('\n')
+const stepReasoning = step => reasoningText(step).split('\n').filter(line => !isActivity(line)).join('\n').trim()
+export const stepActivity = step => reasoningText(step).split('\n').filter(isActivity).map(line => line.slice(ACTIVITY.length).trim()).filter(Boolean)

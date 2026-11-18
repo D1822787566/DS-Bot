@@ -248,6 +248,7 @@ function decide(body) {
         return [text(picked ? `好，就从「${picked}」开始。` : '好的。'), text('我先把要点理一下，稍后给你一个方案。')]
       }
       case 'list_bots': return [text(`现在的班底：\n${resultText}`)]
+      case 'cua': return [text(`cua 结果：${resultText.slice(0, 400)}`)]
       case 'create_group':
       case 'update_group':
       case 'delete_group':
@@ -401,6 +402,12 @@ function decide(body) {
     if (/来回/.test(userLine)) return [text(mentioner ? `@${mentioner} 回你` : leads && peer ? `@${peer} 来回` : '[PASS]')]
     if (mentioner) return [text('进度正常，今天能交。')]
     if (/安排/.test(userLine)) return [text(leads && peer ? `@${peer} 你先说说进度。` : '[PASS]')]
+    // 调用 <tool> <json> in a group: the same generic trigger as in a Bot's own chat,
+    // so a member's turn can drive a real tool (a write, a shell command) in the group.
+    if ((ask = /调用\s*(\S+)(?:\s+([\s\S]+))?/.exec(userLine))) {
+      if (!tools.has(ask[1])) return [text(`The tool ${ask[1]} is not in my tool list.`)]
+      try { return [tool(ask[1], ask[2] ? JSON.parse(ask[2]) : {})] } catch { return [text(`Bad JSON for ${ask[1]}.`)] }
+    }
     if (/讨论/.test(userLine)) return [text(leads ? '@all 大家各说一句。' : '我觉得可以。')]
     return [text(`${me}：${leads ? '我是群管理员，需要拍板时找我。' : '我负责自己那一摊，有需要直接点我。'}`)]
   }
@@ -428,6 +435,13 @@ function decide(body) {
   if ((order = /^插话\s*(\S+?)\s*[:：]\s*(.+)$/.exec(userText))) return [tool('message_bot', { to: order[1], message: order[2], when: 'now' })]
   if ((order = /^排队\s*(\S+?)\s*[:：]\s*(.+)$/.exec(userText))) return [tool('message_bot', { to: order[1], message: order[2], when: 'queue' })]
   if ((order = /^叫停\s*(\S+?)\s*[:：]\s*(.+)$/.exec(userText))) return [tool('stop_bot', { bot: order[1], reason: order[2] })]
+  // 调用 <tool> <json>: emit the named tool call verbatim — the generic way to
+  // drive a tool the mock has no dedicated trigger for (e.g. the cua methods).
+  if ((order = /^调用\s*(\S+)(?:\s+([\s\S]+))?$/.exec(userText))) {
+    if (!tools.has(order[1])) return [text(`The tool ${order[1]} is not in my tool list.`)]
+    try { return [tool(order[1], order[2] ? JSON.parse(order[2]) : {})] }
+    catch { return [text(`Bad JSON for ${order[1]}.`)] }
+  }
   if ((order = /^看群\s*(.+)$/.exec(userText))) return [tool('read_group_chat', { group: order[1].trim() })]
   // Memory: 记住[@话题] 事实 · 团队记住 事实 · 忘掉 事实 · 回忆 [词]
   if ((order = /^(团队)?记住(?:@(\S+))?\s*[:：]?\s*(.+)$/.exec(userText)) && tools.has('remember')) {

@@ -13,6 +13,9 @@ export function insertAnnotation(inputActions, text, annotation) {
   return inputActions.insertQuote(withAnnotation(text, annotation))
 }
 
+// The host's quote interaction owns admission. This renderer keeps the host's
+// selection flow intact with both Quote and Annotate pills on team chats, and
+// opens the annotation editor only when the user chooses Annotate.
 export function TextSelectionAction({ sessionId, dismiss, readText, clearSelection, inputActions, useSession, useRoster, actions, t: hostT }) {
   const enabled = useSession(state => !state.removed && (state.subagent === null || state.subagent.address.mode === 'continuable' && state.subagent.parentAvailable === true))
   const team = useRoster(state => state.byId[sessionId] !== undefined || state.roomsById[sessionId] !== undefined)
@@ -33,6 +36,8 @@ export function TextSelectionAction({ sessionId, dismiss, readText, clearSelecti
   useEffect(() => () => clearTimeout(closeTimer.current), [])
   if (!enabled) return null
 
+  // Selection and navigation changes belong to the host. Explicit closes linger
+  // here so this card can play its exit before releasing the same host surface.
   const close = () => {
     clearSelection()
     setClosing(true)
@@ -87,20 +92,35 @@ export function TextSelectionAction({ sessionId, dismiss, readText, clearSelecti
   if (!team) {
     return h('button', {
       type: 'button', className: 'bt-quote-plain', 'aria-label': hostT('quote.add'),
-      onPointerDown: event => event.preventDefault(), onClick: quoteOnly,
+      onPointerDown: event => event.preventDefault(),
+      onClick: quoteOnly,
     }, hostT('quote.add'))
   }
+
   if (!editing) {
     return h('div', { className: 'bt-selection-actions' },
-      h('button', { type: 'button', className: 'bt-selection-action', 'aria-label': hostT('quote.add'), onPointerDown: event => event.preventDefault(), onClick: quoteOnly }, hostT('quote.add')),
-      h('button', { type: 'button', className: 'bt-selection-action bt-quote-annotate', 'aria-label': t('Annotate'), onPointerDown: event => event.preventDefault(), onClick: startAnnotate }, t('Annotate')))
+      h('button', {
+        type: 'button', className: 'bt-selection-action', 'aria-label': hostT('quote.add'),
+        onPointerDown: event => event.preventDefault(),
+        onClick: quoteOnly,
+      }, hostT('quote.add')),
+      h('button', {
+        type: 'button', className: 'bt-selection-action bt-quote-annotate', 'aria-label': t('Annotate'),
+        onPointerDown: event => event.preventDefault(),
+        onClick: startAnnotate,
+      }, t('Annotate')))
   }
+
   return h('section', { className: 'bt-annotation', 'aria-label': t('Annotate quote'), 'data-leaving': closing || undefined, onPointerDown: event => event.stopPropagation() },
     h('label', { className: 'bt-annotation-label', htmlFor: 'bt-annotation-field' }, t('Annotation')),
     h('blockquote', { className: 'bt-annotation-quote' }, quoteText()),
-    h('textarea', { id: 'bt-annotation-field', ref: field, value: annotation, rows: 3, placeholder: t('Add an annotation…'), 'aria-label': t('Annotation'), disabled: sending || closing, onChange: event => setAnnotation(event.target.value), onKeyDown }),
+    h('textarea', {
+      id: 'bt-annotation-field', ref: field, value: annotation, rows: 3,
+      placeholder: t('Add an annotation…'), 'aria-label': t('Annotation'),
+      disabled: sending || closing, onChange: event => setAnnotation(event.target.value), onKeyDown,
+    }),
     h('div', { className: 'bt-annotation-actions' },
-      h('button', { type: 'button', className: 'bt-annotation-add', disabled: sending || closing, onClick: add, title: t('Add quote and annotation · Enter') }, t('Add')),
+      h('button', { type: 'button', className: 'bt-annotation-add', disabled: sending || closing, onClick: add, title: t('Add quote and annotation to the composer · Enter') }, t('Add')),
       h('button', { type: 'button', className: 'bt-annotation-send', disabled: sending || closing, onClick: () => void send(), title: t('Send quote and annotation · Ctrl+Enter') }, sending ? t('Sending…') : t('Send'))))
 }
 
@@ -122,6 +142,7 @@ export const ANNOTATION_CSS = `
 .bt-annotation-actions button{height:28px;border:1px solid var(--bt-line-2);border-radius:999px;padding:0 12px;background:var(--bt-main);color:var(--bt-ink);font:12px/16px var(--bt-font);cursor:pointer;touch-action:manipulation}
 .bt-annotation-actions button:hover{background:var(--bt-hover)}
 .bt-annotation-actions .bt-annotation-send{background:var(--bt-accent);border-color:var(--bt-accent);color:var(--bt-accent-ink)}
+.bt-annotation-actions .bt-annotation-send:hover{filter:brightness(1.06)}
 .bt-annotation-actions button:disabled{opacity:.55;cursor:default}
 @keyframes bt-annotation-in{from{transform:translateY(3px) scale(.98)}to{transform:none}}
 @keyframes bt-annotation-veil{from{opacity:0}to{opacity:1}}

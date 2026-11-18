@@ -1,4 +1,5 @@
-import { createElement as h, useEffect, useState } from 'react'
+import { createElement as h, Fragment, useEffect, useState } from 'react'
+import { PlusIcon } from './icons.js'
 import { t } from './i18n.js'
 
 const blank = () => ({ name: '', kind: 'mcp', description: '', transport: 'stdio', command: '', argsText: '', envText: '{}', url: '', headersText: '{}', content: '', items: [] })
@@ -59,48 +60,51 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     }
   }
   const available = items.filter(item => item.name !== draft.name && ['mcp', 'skill'].includes(item.kind))
-  return h('form', { className: 'bt-connector-form', onSubmit: submit },
+  return h('form', { className: 'bt-set-card bt-task-form', onSubmit: submit },
     h(Field, { label: 'Name', value: draft.name, disabled: draft.originalName !== undefined, onChange: value => set('name', value), placeholder: 'my-tool' }),
-    h('label', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
+    h('label', { className: 'bt-set-row bt-bs-row' },
       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Type'))),
-      h('select', { className: 'bt-input', value: draft.kind, disabled: draft.originalName !== undefined, onChange: event => set('kind', event.target.value) },
+      h('select', { className: 'bt-select bt-task-bot', value: draft.kind, disabled: draft.originalName !== undefined, onChange: event => set('kind', event.target.value) },
         ['mcp', 'skill', 'pack'].map(kind => h('option', { key: kind, value: kind }, t(kind === 'mcp' ? 'MCP server' : kind === 'skill' ? 'Skill' : 'Pack'))))),
     h(Field, { label: 'Description', value: draft.description, onChange: value => set('description', value) }),
-    draft.kind === 'mcp' ? h('label', { className: 'bt-set-row bt-bs-row bt-bs-stack' },
+    draft.kind === 'mcp' ? h('label', { className: 'bt-set-row bt-bs-row' },
       h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Connection'))),
-      h('select', { className: 'bt-input', value: draft.transport, onChange: event => set('transport', event.target.value) },
+      h('select', { className: 'bt-select bt-task-bot', value: draft.transport, onChange: event => set('transport', event.target.value) },
         h('option', { value: 'stdio' }, t('Local command')),
         h('option', { value: 'streamable-http' }, t('HTTP server')))) : null,
-    draft.kind === 'mcp' && draft.transport === 'stdio' ? h('div', null,
+    draft.kind === 'mcp' && draft.transport === 'stdio' ? h(Fragment, null,
       h(Field, { label: 'Command', value: draft.command, onChange: value => set('command', value) }),
       h(Field, { label: 'Arguments (one per line)', value: draft.argsText, onChange: value => set('argsText', value), multiline: true }),
       h(Field, { label: 'Environment (JSON)', value: draft.envText, onChange: value => set('envText', value), multiline: true, placeholder: t('{"API_KEY": "$DSH_SECRET_MY_KEY"}') })) : null,
-    draft.kind === 'mcp' && draft.transport === 'streamable-http' ? h('div', null,
+    draft.kind === 'mcp' && draft.transport === 'streamable-http' ? h(Fragment, null,
       h(Field, { label: 'URL', value: draft.url, onChange: value => set('url', value) }),
       h(Field, { label: 'Headers (JSON)', value: draft.headersText, onChange: value => set('headersText', value), multiline: true, placeholder: t('{"API_KEY": "$DSH_SECRET_MY_KEY"}') })) : null,
     draft.kind === 'skill' ? h(Field, { label: 'Skill instructions', value: draft.content, onChange: value => set('content', value), multiline: true }) : null,
-    draft.kind === 'pack' ? h('div', { className: 'bt-set-card' },
+    draft.kind === 'pack' ? h(Fragment, null,
       available.length === 0 ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('Save an MCP server or skill first.')))
         : available.map(item => h('label', { key: item.name, className: 'bt-set-row bt-bs-row' },
           h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, item.name)),
           h('input', { type: 'checkbox', checked: draft.items.includes(item.name), onChange: event => set('items', event.target.checked ? [...draft.items, item.name] : draft.items.filter(name => name !== item.name)) })))) : null,
-    error ? h('div', { className: 'bt-connector-error', role: 'alert' }, error) : null,
-    h('div', { className: 'bt-connector-form-row' },
+    error ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-danger bt-set-hint', role: 'alert' }, error)) : null,
+    h('div', { className: 'bt-set-row bt-task-foot' },
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onClose }, t('Cancel')),
-      h('button', { type: 'submit', className: 'bt-soft bt-soft-sm' }, draft.originalName ? t('Save changes') : t('Add capability'))))
+      h('button', { type: 'submit', className: 'bt-send bt-soft-sm' }, draft.originalName ? t('Save changes') : t('Add capability'))))
 }
 
 function CapabilityRow({ item, onEdit, onDelete, onApprove, confirming }) {
   const detail = item.kind === 'pack' ? `${t('Pack')}: ${(item.items ?? []).join(', ') || t('No items')}`
     : item.kind === 'mcp' ? item.transport === 'stdio' ? t('Local command') : t('HTTP server')
       : t('Skill')
+  const badge = item.kind === 'mcp' ? 'MCP' : item.kind === 'skill' ? t('Skill') : t('Pack')
   const secondary = item.kind === 'pack'
     ? [item.description, (item.items ?? []).join(', ') || t('No items')].filter(Boolean).join(' · ')
     : item.description || detail
   return h('div', { className: 'bt-connector' },
     h('div', { className: 'bt-connector-head' },
       h('span', { className: 'bt-connector-text' },
-        h('span', { className: 'bt-connector-name' }, item.name),
+        h('span', { className: 'bt-connector-title' },
+          h('span', { className: 'bt-connector-name' }, item.name),
+          h('span', { className: 'bt-tag' }, badge)),
         h('span', { className: 'bt-connector-status' }, secondary)),
       h('span', { className: 'bt-connector-actions' },
         item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
@@ -134,9 +138,9 @@ export function CapabilitiesPage({ roster, actions, run }) {
     void run(actions.deleteCapability(item.name))
   }
   return h('section', { className: 'bt-set-section' },
-    h('h3', null, t('Shared capabilities')),
-    h('div', { className: 'bt-actions' },
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: startNew }, t('Add capability'))),
+    h('div', { className: 'bt-la-sec-head' },
+      h('h3', null, t('Shared capabilities')),
+      draft ? null : h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-with-icon', onClick: startNew }, h(PlusIcon), t('Add capability'))),
     draft ? h(CapabilityForm, { draft, setDraft, items, actions, onClose: () => setDraft(null) }) : null,
     h('div', { className: 'bt-set-card bt-connectors-card' },
       items.length === 0 ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('No capabilities saved')))

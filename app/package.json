@@ -14,13 +14,13 @@
     "build": "vite build",
     "start": "electron .",
     "pack": "electron-builder --dir --publish never",
-    "dist": "electron-builder --publish never",
+    "dist": "node scripts/dist.mjs",
     "check-packed": "node scripts/check-packed.mjs",
     "runtime": "node scripts/prepare-runtime.mjs",
     "check-lifecycle": "node scripts/check-lifecycle.mjs",
     "shot": "node scripts/shot.mjs",
     "icon": "node scripts/icon.mjs",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --import ./test/reset-env.mjs --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "@deepseek-ai/cordis-plugin-group": "1.1.0",
@@ -39,6 +39,7 @@
     "@deepseek-ai/dsh-cua": "0.2.2-rc.1",
     "@deepseek-ai/dsh-deepseek-account": "0.2.2-rc.1",
     "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-experimental-plugin-market-bundle": "0.2.2-rc.1",
     "@deepseek-ai/dsh-experimental-voice-input-bundle": "0.2.2-rc.1",
     "@deepseek-ai/dsh-fs": "0.2.2-rc.1",
     "@deepseek-ai/dsh-hook-protocol": "0.2.2-rc.1",
@@ -75,17 +76,27 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@shikijs/langs": "4.4.3",
+    "anser": "2.3.5",
+    "clsx": "2.1.1",
     "electron": "44.7.0",
     "electron-builder": "26.17.0",
     "esbuild": "0.28.2",
     "extract-zip": "2.0.1",
+    "immer": "10.1.1",
+    "katex": "0.18.7",
+    "mdast-util-math": "3.0.0",
+    "micromark-extension-math": "3.1.0",
     "papaparse": "5.5.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
+    "shiki": "4.4.3",
+    "simple-icons": "16.31.0",
     "tar": "7.5.22",
-    "vite": "8.3.4"
+    "vite": "8.3.4",
+    "zustand": "4.5.7"
   },
   "overrides": {
     "@deepseek-ai/cordis": "4.1.0",

@@ -1,14 +1,17 @@
 // The first-run import: a copy of the Bot team in the user's own DSH home. It only reads there.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { parseSessionFormatLogFilename } from '@deepseek-ai/dsh-session-format'
 import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
-import { parse, stringify } from 'yaml'
-import { copyTree, within } from './copy-tree.mjs'
+import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { dump, load } from 'js-yaml'
+import { parse } from 'yaml'
+import { copyTree, disk, within } from './copy-tree.mjs'
 
 export { within }
+
+const { existsSync, readdirSync, readFileSync, statSync } = disk
+const { chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } = disk.promises
 
 // The rows of a profile patch that hold model settings: DeepSeek's API and account, other
 // providers, the default model and the agent presets. Rows of other plugins may name plugins
@@ -63,7 +66,7 @@ function modelProfiles(from) {
     if (!existsSync(file)) return []
     let patch
     try {
-      patch = parse(readFileSync(file, 'utf8'))
+      patch = load(readFileSync(file, 'utf8'), { schema: entryListSchema })
     } catch (error) {
       // An unreadable profile has no model settings to copy; the team is still there.
       console.warn(`DS Bot: skipped the model settings in ${file}: ${error instanceof Error ? error.message : String(error)}`)
@@ -286,11 +289,11 @@ async function copyKey(from, to, name) {
 
 async function writeModelRows(to, rows) {
   const file = join(to, 'profiles', 'ds-bot', 'cordis.patch.yml')
-  const current = existsSync(file) ? parse(await readFile(file, 'utf8')) : undefined
+  const current = existsSync(file) ? load(await readFile(file, 'utf8'), { schema: entryListSchema }) : undefined
   const ids = new Set(rows.map(row => row.id))
   const kept = Array.isArray(current) ? current.filter(row => !ids.has(row?.id)) : []
   await mkdir(join(to, 'profiles', 'ds-bot'), { recursive: true })
-  await writeFile(file, stringify([...kept, ...rows]))
+  await writeFile(file, dump([...kept, ...rows], { schema: entryListSchema }))
 }
 
 /**

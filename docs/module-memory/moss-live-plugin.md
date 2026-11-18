@@ -1,7 +1,7 @@
 # MOSS Live 独立实时语音插件
 
 记录状态：Profile、Bot 详情侧栏、实时字幕和会话记忆已实现；重拨后历史直接展示已通过本地回归，旧插件页入口已移除并收敛到当前 Bot 详情侧栏；静默结果播报仍有 MOSS 空播放标识异常，MLF-04 进行中
-最近更新：2026-11-17
+最近更新：2026-11-18
 
 ## 模块目标
 
@@ -72,6 +72,8 @@
 - ML-D37 / 2026-11-18 / `[用户确认]` 用户确认 DSH 也必须同步到上游 0.3.8 对应的 `0.2.2-rc.1`。影响：迁移分支同步 DSH 包、Cordis group/include、computer-use/CUA/Typert 协议和轻量插件入口；MOSS Profile、实时字幕、会话记忆、Host relay 与桌面启动数据目录继续保留。
 
 ## 开发状态
+
+- [代码证据] 2026-11-18 已完整集成固定上游 0.3.8 与 DSH 0.2.2-rc.1；保留 MOSS Host/客户端、Profile 历史恢复、屏幕共享授权、详情与实时字幕，并与上游 Computer 页签共存。MOSS 相关测试纳入插件全量 3117 通过、7 跳过、0 失败；不代表真人通话和空播放标识异常已经验收。详见[迁移记录](upstream-migration.md)。
 
 - `[代码证据]` 2026-11-17 已实现重拨历史直接展示：主字幕列表加入当前 Profile 的既往会话，排除当前通话已保存检查点以防重复；新通话自动返回字幕视图并跟随最新内容。回归先失败后通过；全量 1867 项，1866 通过、1 跳过、0 失败，构建与 lint 通过（仅既有警告）。随后按用户要求先正常退出旧实例，再通过 `start.ps1` 重启；已核对唯一正式 Desktop/Host、原数据目录的持有锁、窗口可见及源码和安装副本 `client.js` hash 一致，真人通话体验待复测。
 - `[代码证据]` 2026-11-18 已移除旧 MOSS Plugins tab 注册、`openMossLiveSettings` 跳转 action、`MossLiveSettings` 全页配置、旧 DS Bot 接入 panel、旧场景/动画/屏幕共享 CSS 和页面专属测试。当前详情侧栏和实时字幕仍由 `MossLiveDetailsPanel`、`MossLiveCaptionPanel`、controller、Host relay 和 Profile memory 承载；屏幕共享开始按钮已迁移到实时字幕侧栏。

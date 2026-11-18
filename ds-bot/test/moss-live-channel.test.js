@@ -15,6 +15,7 @@ function channel(t, { apiKey = 'test-moss-key', fetchImpl } = {}) {
     load: async () => {},
     save: async () => {},
     refresh: async () => {},
+    phoneServe: () => {},
     readOnly: () => undefined,
     secretValue: () => apiKey,
     noteFailure: error => assert.fail(JSON.stringify(error)),

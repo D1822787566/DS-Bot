@@ -4,17 +4,28 @@ import { ArrowUpIcon, ChevronDownIcon } from './icons.js'
 import { t } from './i18n.js'
 import { reducedMotion, stepMenuFocus, useLinger } from './motion.js'
 
+// A Bot reply taller than the chat's visible height is read by scrolling through it. Once
+// its start has scrolled away, a pill under the header takes the reader back there; when
+// the reply has sections, the pill names the one being read and lists them all.
+
+// The pill sits GAP below DS Bot's header; a section counts as being read once its heading
+// is within SLACK of the pill's bottom edge.
 const GAP = 8
 const PILL = 28
 const MAX_WIDTH = 360
 const SLACK = 24
+// The pill leaves while less than this much of the reply is still below it.
 const TAIL = 96
 const HEADINGS = 'h1,h2,h3,h4'
 
+// The reply's own headings, in order: not the ones in a quote, a table or a folded
+// detail it embeds.
 export function headingsIn(root) {
   return Array.from(root.querySelectorAll(HEADINGS)).filter(node => !node.closest('blockquote,table,details') && node.textContent.trim() !== '')
 }
 
+// The sections a reply lists: its headings' text, indented by level from the highest one
+// it uses (at most two steps). Fewer than two headings make no list.
 export function outlineOf(headings) {
   if (headings.length < 2) return []
   const levels = headings.map(node => Number(node.tagName.slice(1)))
@@ -22,6 +33,7 @@ export function outlineOf(headings) {
   return headings.map((node, index) => ({ text: node.textContent.trim().replace(/\s+/g, ' '), depth: Math.min(levels[index] - top, 2) }))
 }
 
+// The section the reader is in: the last heading at or above `line`, -1 before the first.
 export function sectionAt(tops, line) {
   let at = -1
   for (let index = 0; index < tops.length; index += 1) {
@@ -31,6 +43,9 @@ export function sectionAt(tops, line) {
   return at
 }
 
+// The band of `scroller` the reader sees: below DS Bot's floating header, which lies over
+// the scroller's top in DSH and in the desktop app alike, and above DSH's composer, which
+// sits inside the scroller (the desktop app's sits below it).
 export function readingBand(scroller) {
   const box = scroller.getBoundingClientRect()
   const head = Array.from(document.querySelectorAll('.bt-head'), node => node.getBoundingClientRect())
@@ -40,6 +55,10 @@ export function readingBand(scroller) {
   return { top: top + GAP, bottom: box.bottom - composer, left: box.left, right: box.right }
 }
 
+// Where the pill goes for a reply at `rect`, or null when the reply's start is in view,
+// the reply fits the band, or too little of it is left below the pill. `above`, the rect
+// of the "N new messages ↑" pill at the same height, moves this one under it when the
+// two would meet.
 export function pillPlace(rect, band, above) {
   if (rect.height <= band.bottom - band.top) return null
   const left = Math.max(rect.left, band.left + GAP)
@@ -48,8 +67,13 @@ export function pillPlace(rect, band, above) {
   return { top: Math.round(top), left: Math.round(left) }
 }
 
+// Whether a reply `height` tall follows the scroll. Three quarters of the band is enough:
+// DSH's composer can grow and leave a band shorter than the reply without a size change
+// here to say so.
 export const fillsBand = (height, band) => height > (band.bottom - band.top) * 0.75
 
+// Replies are many and few are long, so one observer watches every reply's size, and the
+// scroller's for the band they are measured against; only a long reply follows the scroll.
 let sizes = null
 const sized = new WeakMap()
 function watchSize(node, onSize) {
@@ -69,6 +93,7 @@ function watchSize(node, onSize) {
 
 const glide = (scroller, by) => scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + by), behavior: reducedMotion() ? 'auto' : 'smooth' })
 
+// The pill for the reply in `box`; `active` is false while it streams or is folded.
 export function ReplyGuide({ box, active }) {
   const [scroller, setScroller] = useState(null)
   const [long, setLong] = useState(false)
@@ -138,6 +163,7 @@ export function ReplyGuide({ box, active }) {
   const toSection = (index) => {
     setMenu(false)
     const heading = headings[index]
+    // The heading lands under the pill, which stays while the reader is inside the reply.
     if (heading) glide(scroller, heading.getBoundingClientRect().top - shown.top - PILL - GAP)
   }
   const label = outline[shown.current]?.text ?? t('Contents')

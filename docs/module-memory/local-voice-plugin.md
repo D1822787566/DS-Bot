@@ -1,7 +1,7 @@
 # Local Voice 独立语音插件
 
 记录状态：方案已确认，首版实现进行中
-最近更新：2026-11-10
+最近更新：2026-11-19
 
 ## 模块目标
 
@@ -30,6 +30,8 @@
 
 ## 开发状态
 
+- [代码证据] 2026-11-18 上游 0.3.8 / DSH 0.2.2-rc.1 集成保留独立 Local Voice bundle、原生插件入口与运行时打包边界；33 项 Node 测试与 app 注册回归通过。完整语音链路的待完成范围不变；见[迁移记录](upstream-migration.md)。
+
 - [代码证据] 现有 Phone Agent 已有可复用的协议和音频处理经验；Local Voice 不导入 Phone Agent 内部模块。
 - [代码证据] `local-voice/` 已创建独立包清单、Host manager、中文配置校验、设备占用租约、loopback API route、设置页 client bundle、Node runtime client 和 Python JSON-lines runtime。
 - [代码证据] `local-voice` Node 测试当前为 `33 passed`；2026-11-10 Desktop profile/真实 Cordis 激活/overlay 相关测试 `10 passed`；上轮 Python runtime 测试 `14 passed`。
@@ -48,7 +50,7 @@
 ## 继续入口
 
 - 下一步：把 `LocalVoiceLoop` 接到 Local Voice Host 的 DS Bot session/LLM 回调，先用固定 ASR fixture 和 mock LLM 验证首段 TTS、播放取消和 generation 隔离，再接入 Windows 音频。
-- 当前用户进程仍运行旧 Desktop profile；需从托盘完全退出后通过 `start.ps1` 重启，随后打开“插件 → Local Voice（本地语音）”。本轮只刷新 Local Voice 已安装文件，未关闭用户的 DS Bot 或 Phone Agent。
+- [代码证据] 2026-11-19 已通过 `start.ps1` 启动上游迁移后的正式 Desktop，并同步 Local Voice 安装副本；Local Voice 仍从“插件 → Local Voice（本地语音）”进入，完整本地语音链路继续按下方范围开发。
 - 已完成：Node runtime client 支持 ready/capability、最终转写、PCM 流、request-level cancel；Python runtime 支持 hello、并发 transcribe/synthesize、cancel、PCM16 校验、离线模型路径和 TTS 预热。
 - 验证重点：DS Bot session 路由、首段播放开始、打断后的迟到事件隔离、唤醒词/主人声纹必经路径、真实设备 TTFA。
 - 若 MeloTTS 的 Windows 依赖或延迟不满足目标，再按开发文档评估 CosyVoice2-0.5B；在 smoke test 完成前不宣称本地 TTS 已可用。

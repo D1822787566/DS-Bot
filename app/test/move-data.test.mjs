@@ -159,6 +159,13 @@ test('links in the data lead inside the copy, not back into the old folder', asy
 // tests do not have, so there it is a link the copy cannot make again.
 test('a link the move cannot make again stops the move; the import skips it', { skip: process.platform !== 'win32' }, async (t) => {
   const { root, from } = setup(t)
+  try {
+    symlinkSync(join(root, 'gone'), join(root, 'permission-probe'))
+    t.skip('This Windows account can recreate dangling file symlinks')
+    return
+  } catch (error) {
+    if (error.code !== 'EPERM') throw error
+  }
   symlinkSync(join(root, 'gone'), join(from, 'lost'), 'junction')
   const to = join(root, 'new')
   await assert.rejects(copyData(from, to), { code: 'EPERM' })

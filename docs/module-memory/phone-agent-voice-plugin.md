@@ -1,7 +1,7 @@
 # Phone Agent 语音插件
 
 记录状态：首版开发进行中
-最近更新：2026-11-08
+最近更新：2026-11-18
 
 ## 模块目标
 
@@ -63,6 +63,8 @@
 - [用户确认] D-PAVP-031 · 2026-11-09 · 本地 TTS、中文 ASR 和类全双工最小闭环归属新建的 `local-voice/` 独立插件；Phone Agent 保留原有功能、配置、生命周期、UI 和音频 provider。原因：用户确认独立插件可以避免新闭环影响现有 Phone Agent。影响：Local Voice 拥有自己的 Host、Bridge、Python runtime、UI、测试和设备互斥检查。
 
 ## 开发状态
+
+- [代码证据] 2026-11-18 上游 0.3.8 / DSH 0.2.2-rc.1 集成保留 Phone Agent Host、Bridge、测试中心、Python 运行时及 state 保存刷新；相关 Node 回归纳入插件全量通过。本次未修改语音 provider 或扩大 Windows 真实设备验收结论；见[迁移记录](upstream-migration.md)。
 
 - [代码证据] Phone Agent 已有角色唤醒映射、激活角色更新、会话绑定、切换取消和设备状态链路，可作为插件侧的复用基础。
 - [代码证据] DS Bot 已有插件安装/检查、Voice Input、Voice Mode 和 Bot 预设绑定入口。

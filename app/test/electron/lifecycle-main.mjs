@@ -131,8 +131,9 @@ app.whenReady().then(async () => {
   shell.install()
   await new Promise(resolve => commands.listen(0, '127.0.0.1', resolve))
   const win = createWindow()
+  const shown = new Promise(resolve => win.once('ready-to-show', resolve))
   // The launch URL trades its token for the cookie of the Host.
-  void win.loadURL(`${origin}/?token=${token}`).catch(() => {})
-  await new Promise(resolve => setTimeout(resolve, 1200))
+  await win.loadURL(`${origin}/?token=${token}`)
+  await shown
   answer({ ready: true, port: commands.address().port, ...state() })
 })

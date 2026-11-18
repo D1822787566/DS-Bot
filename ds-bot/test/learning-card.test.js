@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { editLines, lineDiff, proposalPlacement } from '../src/client/learning-card-model.js'
+import { answerKeepsCard, editLines, lineDiff, proposalPlacement, withoutEntry } from '../src/client/learning-card-model.js'
 
 const turns = new Map([
   [1, { turn: 1, end: { time: 100 }, status: 'closed' }],
@@ -20,6 +20,15 @@ test('a proposal without an earlier closed turn falls back to the latest closed 
 test('a proposal uses the dock when there are no closed turns', () => {
   assert.deepEqual(proposalPlacement({ at: 150 }, new Map()), { kind: 'dock' })
   assert.deepEqual(proposalPlacement({ at: 150 }, new Map([[3, { turn: 3, status: 'open' }]])), { kind: 'dock' })
+})
+
+test('an answered proposal stays where it was answered and never goes to the dock', () => {
+  assert.deepEqual(proposalPlacement({ at: 150, outcome: 'approved', settledAt: 900 }, turns), { kind: 'turn', turn: 1 })
+  // Shown after the latest turn while waiting; answered then, it stays there as later turns end.
+  const later = new Map([...turns, [4, { turn: 4, end: { time: 1000 }, status: 'closed' }]])
+  assert.deepEqual(proposalPlacement({ at: 50, outcome: 'declined', settledAt: 300 }, later), { kind: 'turn', turn: 2 })
+  assert.deepEqual(proposalPlacement({ at: 50 }, later), { kind: 'turn', turn: 4 })
+  assert.deepEqual(proposalPlacement({ at: 150, outcome: 'approved', settledAt: 160 }, new Map()), { kind: 'none' })
 })
 
 test('a new skill diff marks every line as added', () => {
@@ -61,4 +70,21 @@ test('AGENTS.md edit previews keep the blank lines the edit writes', () => {
   assert.deepEqual(editLines('\n'), ['', ''])
   assert.deepEqual(editLines('Rule\n\n'), ['Rule', '', ''])
   assert.deepEqual(editLines(undefined), [])
+})
+
+test('a failure keeps the card only while another try could work', () => {
+  // The host no longer has the proposal: nothing is left to answer.
+  assert.equal(answerKeepsCard(Object.assign(new Error('gone'), { code: 'bot/stale' })), false)
+  // Everything else can pass on a retry, or still wants a different answer.
+  for (const code of ['NETWORK', 'bot/internal', 'bot/refused', 'HTTP_502', 'bot/error']) {
+    assert.equal(answerKeepsCard(Object.assign(new Error(code), { code })), true, code)
+  }
+  assert.equal(answerKeepsCard(new Error('no code')), true)
+  assert.equal(answerKeepsCard(undefined), true)
+})
+
+test('a record without one entry keeps every other entry, and the same object when nothing changed', () => {
+  const state = { a: 1, b: 2 }
+  assert.deepEqual(withoutEntry(state, 'a'), { b: 2 })
+  assert.equal(withoutEntry(state, 'z'), state)
 })
