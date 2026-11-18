@@ -85,7 +85,8 @@ Confirmed / migration in progress
 - `[代码证据]` 已同步 DSH 0.2.2-rc.1 及 `cordis-plugin-group/include` 1.1.0；加入 computer-use、CUA、Typert 协议包和可选 macOS CUA 驱动，保留 `dshmarket`、Local Voice、MOSS 和当前桌面启动流程。
 - `[代码证据]` 已为 ds-bot 增加上游轻量入口 `plugin.js`/`src/host/entry.js`，主运行时仍由当前 `index.js` 承载；插件的 MOSS Host relay、Profile 和会话记忆模块未被覆盖。
 - `[代码证据]` DSH 升级验证：ds-bot 构建通过；全量插件测试 1850 项，1849 通过、1 跳过、0 失败；lint 退出码 0（仅既有警告）；Desktop app 构建通过；app 测试 435 项，432 通过、2 跳过、1 失败，失败为 Windows 符号链接权限测试的既有环境差异。
+- `[代码证据]` 第一批已完成长回复阅读条和文本 Quote/Annotate：新增 `reading.js`、`text-annotation.js`、菜单键盘导航、阅读条样式和 `conversation.chat.text-interaction` 接入；新增 4 项回归测试，插件全量测试 1854 项，1853 通过、1 跳过、0 失败。
 
 ## 8. 继续入口
 
-下一步从第一批开始：先移植 `reading.js` 和 Quote / Annotate 的独立模块，再处理动画档位和更新恢复。每个批次完成后更新本节、模块记忆和验证记录。DSH 版本升级已经完成第一批兼容性验证；Desktop app 的符号链接权限用例需要在支持该权限模型的环境复核。
+下一步继续第一批：迁移动画档位 Full / Reduced / Off，再处理更新恢复和长消息 settled card 展开。每个批次完成后更新本节、模块记忆和验证记录。Desktop app 的符号链接权限用例仍需要在支持该权限模型的环境复核。
