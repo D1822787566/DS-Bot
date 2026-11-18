@@ -19,7 +19,7 @@ Implemented MVP · 2026-11-05 · 当前阶段：ACCEPTANCE。
 - `ds-bot/src/host/parts.js`：换段调用 `rt.createSession()`；还使用预设提供的 compaction 服务，须检查外部预设与换段机制的关系。
 - `app/src/profile.mjs`：使用独立 `ds-bot` profile，固定 bundle 在前，保留用户安装的其他 bundle。
 - `ds-bot/src/client/index.js` 的 `voiceSetup`：可选使用 `pluginNavigation.openBundle()`，并明确注明桌面应用 profile 没有 plugin manager。不能假定把现有页面导航过来就能完成迁移。
-- `ds-bot/dev/harness/package.json`：当前测试 DSH 为 `0.2.1-rc.5`。
+- `ds-bot/dev/harness/package.json`：当前测试 DSH 为 `0.2.2-rc.1`。
 - `app/test/profile.test.mjs`：已有保留用户 bundle 的测试。它不能证明第三方预设可绑定 Bot。
 
 历史约束：`docs/plans/2026-10-13-dsh-concessions.md` 的 C1、C13 说明固定 standard 的工具兼容原因；C7、C8 记录第三方样式和工具视图的限制。改变这些设计需要维护者确认，不能把本草稿视为替代决定。
@@ -272,7 +272,7 @@ DS Bot → Plugins
 
 ### API 核验
 
-使用锁定版本 `0.2.1-rc.5` npm 包公开 README、导出类型及真实服务核验：
+使用锁定版本 `0.2.2-rc.1` npm 包公开 README、导出类型及真实服务核验：
 
 | 服务 | 使用的公开能力 |
 |---|---|
@@ -306,4 +306,4 @@ DS Bot → Plugins
 - 真实 Host 重启后选择保留；卸载夹具后识别缺失，显式恢复 standard 并保留旧分段：集成通过。
 - 实际隔离浏览器检查 DSH 原生插件页：已安装、插件市场、发现和 Bot 预设标签均可见；发现目录返回插件卡片、分类和安装确认，Bot 预设页显示标准预设可用于 Bot；从插件页返回 Chief、打开新建 Bot 并确认工作预设选择仍保留。截图位于本地 `.playwright-mcp/native-plugins/`，没有制作或发布 PR GIF，没有使用用户真实模型凭证。
 
-StudyMate `2.0.3` 在 DSH `0.2.1-rc.5` 临时 profile 安装成功。其 `learning` 和 `cordis` 预设含启用的 PTC 模块，被标为不兼容；`qa` 保持未验证。完整学习流程和阅读端未验证，未擅自扩展首版范围来适配 PTC。
+StudyMate `2.0.3` 在 DSH `0.2.2-rc.1` 临时 profile 安装成功。其 `learning` 和 `cordis` 预设含启用的 PTC 模块，被标为不兼容；`qa` 保持未验证。完整学习流程和阅读端未验证，未擅自扩展首版范围来适配 PTC。

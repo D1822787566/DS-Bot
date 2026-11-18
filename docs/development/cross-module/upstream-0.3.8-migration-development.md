@@ -13,7 +13,7 @@ Confirmed / migration in progress
 ## 2. 当前基线
 
 - `[代码证据]` 上游基线：`5e9b7da8882da3b68d8a0624342708c2150a9156`，版本 0.3.8，DSH 0.2.2-rc.1。
-- `[代码证据]` 本项目基线：`1ba59d4d545f7ce2301da462e1c0eef577fd2d27`，版本 0.2.7，DSH 0.2.1-rc.5。
+- `[代码证据]` 本项目迁移前基线：`1ba59d4d545f7ce2301da462e1c0eef577fd2d27`，版本 0.2.7，DSH 0.2.1-rc.5；迁移分支已将应用和插件版本推进到 0.3.8，DSH 推进到 0.2.2-rc.1。
 - `[代码证据]` 两者共同祖先为 `71d344bf193f3f18185f25de3d8e5c483046910a`。本项目在共同祖先上增加了 MOSS Live、Local Voice、Phone Agent 和项目治理内容；上游在共同祖先上继续增加了大量产品能力。
 - `[用户确认]` 目标是迁移上游能力，同时保留当前 MOSS 内容中仍属于运行时、Profile、会话记忆、实时字幕、Bot 详情侧栏和安全桥接的部分。
 
@@ -64,7 +64,7 @@ Confirmed / migration in progress
 ## 5. 兼容性边界
 
 - 不直接把上游 `client.js`、`link.js` 或整个 `ds-bot/src/client/index.js` 覆盖到本项目。它们会覆盖 MOSS 和 Local Voice 的入口。
-- 不直接升级 DSH 到 0.2.2-rc.1。DSH 升级单独验证，先确认 MOSS、Local Voice、Office 和 Desktop Host 的兼容性。
+- DSH 0.2.2-rc.1 作为第一批兼容性迁移同步升级；保留 MOSS、Local Voice、Office 和 Desktop Host 的入口与数据目录，并在迁移后执行对应回归。
 - 上游功能按源模块、测试和明确集成点迁移；每批完成后重新构建 `client.js` 并运行对应专项和全量测试。
 - Secrets 加密属于安全边界变化：实现时保留明文兼容迁移、错误恢复和用户可理解的解锁状态，不自动删除旧密钥。
 
@@ -82,8 +82,10 @@ Confirmed / migration in progress
 - `[代码证据]` 已移除旧 MOSS 插件 tab 注册和跳转 action。
 - `[代码证据]` 已删除旧 `MossLiveSettings` 全页配置、旧 DS Bot 接入 panel、旧场景/动画/屏幕共享 CSS 和页面专属测试。
 - `[代码证据]` 已把屏幕共享开始按钮补到当前实时字幕侧栏；相关专项测试通过。
-- `[待确认]` 上游 DSH 0.2.2-rc.1 升级是否与第一批体验能力一起进行，还是单独建立兼容性批次。
+- `[代码证据]` 已同步 DSH 0.2.2-rc.1 及 `cordis-plugin-group/include` 1.1.0；加入 computer-use、CUA、Typert 协议包和可选 macOS CUA 驱动，保留 `dshmarket`、Local Voice、MOSS 和当前桌面启动流程。
+- `[代码证据]` 已为 ds-bot 增加上游轻量入口 `plugin.js`/`src/host/entry.js`，主运行时仍由当前 `index.js` 承载；插件的 MOSS Host relay、Profile 和会话记忆模块未被覆盖。
+- `[代码证据]` DSH 升级验证：ds-bot 构建通过；全量插件测试 1850 项，1849 通过、1 跳过、0 失败；lint 退出码 0（仅既有警告）；Desktop app 构建通过；app 测试 435 项，432 通过、2 跳过、1 失败，失败为 Windows 符号链接权限测试的既有环境差异。
 
 ## 8. 继续入口
 
-下一步从第一批开始：先移植 `reading.js` 和 Quote / Annotate 的独立模块，再处理动画档位和更新恢复。每个批次完成后更新本节、模块记忆和验证记录。
+下一步从第一批开始：先移植 `reading.js` 和 Quote / Annotate 的独立模块，再处理动画档位和更新恢复。每个批次完成后更新本节、模块记忆和验证记录。DSH 版本升级已经完成第一批兼容性验证；Desktop app 的符号链接权限用例需要在支持该权限模型的环境复核。
