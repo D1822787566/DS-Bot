@@ -313,6 +313,33 @@ test('saved MOSS conversations remain readable after returning to the Bot page',
   assert.ok(document.querySelector('[data-moss-caption-idle]'))
 })
 
+test('redial shows saved MOSS captions inline without opening history and keeps Profile records separate', async t => {
+  const previous = { id: 'yesterday', items: [{ kind: 'user', text: '昨天练习了预约。' }, { kind: 'assistant', text: '记得说明日期。' }] }
+  const controller = createSource({
+    visible: true, active: false, busy: false, endedAt: '2026-11-17T01:00:00Z', boundBotId: 'bot-h', profileId: 'profile-h', recordId: previous.id, transcript: previous.items,
+    boundProfile: { id: 'profile-h', botId: 'bot-h', name: '口语练习', memory: { turns: [previous] } },
+  })
+  const document = await mount(t, MossLiveCaptionPanel, { controller }, view => {
+    Object.defineProperty(view.HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 400 })
+  })
+  await act(async () => document.querySelector('[data-moss-caption-history-toggle]').click())
+  assert.ok(document.querySelector('[data-moss-caption-saved-history]'))
+  await act(async () => controller.set(state => ({ ...state, active: true, endedAt: '', recordId: 'today', transcript: [] })))
+  assert.equal(document.querySelector('[data-moss-caption-saved-history]'), null)
+  const history = document.querySelector('[data-moss-caption-transcript]')
+  assert.match(history.textContent, /昨天练习了预约/)
+  assert.match(history.textContent, /记得说明日期/)
+  assert.equal(history.scrollTop, 400, 'redial follows the latest saved captions after closing the archive view')
+  const current = { id: 'today', items: [{ kind: 'user', text: '接着练习说明日期。' }, { kind: 'assistant', text: '请告诉我预约时间。' }] }
+  await act(async () => controller.set(state => ({ ...state, transcript: current.items, boundProfile: { ...state.boundProfile, memory: { turns: [previous, current] } } })))
+  assert.match(history.textContent, /昨天练习了预约/)
+  assert.equal(document.body.textContent.split('接着练习说明日期。').length - 1, 1)
+  assert.equal(document.body.textContent.split('请告诉我预约时间。').length - 1, 1)
+  await act(async () => controller.set(state => ({ ...state, boundBotId: 'chief', profileId: 'work', recordId: 'work-call', transcript: [], boundProfile: { id: 'work', botId: 'chief', memory: { turns: [{ id: 'work-before', items: [{ kind: 'user', text: '工作计划。' }] }] } } })))
+  assert.match(document.querySelector('[data-moss-caption-transcript]').textContent, /工作计划/)
+  assert.doesNotMatch(document.body.textContent, /昨天练习了预约|记得说明日期/)
+})
+
 test('a hung-up MOSS call offers a fresh context and shows memory storage failures', async t => {
   const source = createSource({ visible: true, active: false, busy: false, endedAt: '2026-11-17T01:00:00Z', boundBotId: 'bot-h', profileId: 'profile-h', transcript: [], memoryError: '会话记录保存失败。', boundProfile: { id: 'profile-h', memory: { turns: [{ id: 'last', items: [{ kind: 'user', text: '上次练习' }] }] } } })
   const calls = []

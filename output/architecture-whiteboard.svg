@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">DS Bot 项目架构白板</title>
+  <desc id="desc">展示 start.ps1、Electron、DSH Host、ds-bot、local-voice、浏览器插件和持久化数据之间的关系。</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#e4e0d8" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#4b463d" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5d6b78"/>
+    </marker>
+    <style>
+      .title{font:700 34px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#26231f}
+      .subtitle{font:500 17px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#706a61}
+      .label{font:700 18px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#26231f}
+      .body{font:500 15px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#4d4942}
+      .small{font:500 13px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#6a645b}
+      .lane{font:700 16px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#81796e;letter-spacing:1px}
+      .note{stroke:#cfc7ba;stroke-width:2;rx:14;filter:url(#shadow)}
+      .arrow{fill:none;stroke:#5d6b78;stroke-width:3;marker-end:url(#arrow)}
+      .dashed{fill:none;stroke:#8794a0;stroke-width:2.5;stroke-dasharray:9 8;marker-end:url(#arrow)}
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#f7f5ef"/>
+  <rect x="24" y="24" width="1552" height="952" rx="24" fill="url(#grid)" stroke="#d5cec2" stroke-width="2"/>
+  <text x="70" y="82" class="title">DS Bot 项目架构白板</text>
+  <text x="70" y="115" class="subtitle">从源码启动、桌面壳、DSH Host，到 Bot 业务和能力扩展</text>
+
+  <text x="82" y="172" class="lane">01 入口与桌面壳</text>
+  <text x="455" y="172" class="lane">02 运行底座</text>
+  <text x="835" y="172" class="lane">03 Bot 业务层</text>
+  <text x="1230" y="172" class="lane">04 能力与数据</text>
+
+  <rect x="70" y="205" width="250" height="110" class="note" fill="#fff1b8"/>
+  <text x="95" y="245" class="label">start.ps1</text>
+  <text x="95" y="274" class="body">构建 ds-bot</text>
+  <text x="95" y="298" class="body">同步插件 · 设置数据目录</text>
+
+  <rect x="70" y="380" width="250" height="145" class="note" fill="#ffd7c9"/>
+  <text x="95" y="420" class="label">Electron app</text>
+  <text x="95" y="450" class="body">窗口、托盘、IPC</text>
+  <text x="95" y="477" class="body">BrowserWindow / WebContentsView</text>
+  <text x="95" y="504" class="small">app/src/main.mjs</text>
+
+  <rect x="70" y="600" width="250" height="120" class="note" fill="#e7dbff"/>
+  <text x="95" y="640" class="label">preload.cjs</text>
+  <text x="95" y="670" class="body">受控的 dsBotApp 桥接</text>
+  <text x="95" y="698" class="body">只暴露必要 IPC 能力</text>
+
+  <rect x="430" y="205" width="290" height="135" class="note" fill="#cfe8ff"/>
+  <text x="455" y="245" class="label">HostProcess</text>
+  <text x="455" y="275" class="body">Electron 管理 Node Host 子进程</text>
+  <text x="455" y="303" class="body">启动、停止、失败重启</text>
+  <text x="455" y="330" class="small">app/src/host-process.mjs</text>
+
+  <rect x="430" y="410" width="290" height="155" class="note" fill="#c9f0e1"/>
+  <text x="455" y="450" class="label">DSH Profile</text>
+  <text x="455" y="480" class="body">runProfile + 插件 Bundle</text>
+  <text x="455" y="508" class="body">启动 loopback Web Server</text>
+  <text x="455" y="536" class="small">app/src/host.mjs · profile.mjs</text>
+
+  <rect x="430" y="645" width="290" height="105" class="note" fill="#dce9f5"/>
+  <text x="455" y="685" class="label">DSH Session / Model / Tools</text>
+  <text x="455" y="716" class="body">执行对话、工具和工作区操作</text>
+
+  <rect x="805" y="205" width="335" height="160" class="note" fill="#f9d2e3"/>
+  <text x="830" y="245" class="label">ds-bot Runtime</text>
+  <text x="830" y="275" class="body">index.js 按顺序安装模块</text>
+  <text x="830" y="303" class="body">roster · turns · groups · memory</text>
+  <text x="830" y="331" class="body">tools · permissions · browser · voice</text>
+  <text x="830" y="357" class="small">ds-bot/index.js</text>
+
+  <rect x="805" y="435" width="335" height="135" class="note" fill="#ffe2a8"/>
+  <text x="830" y="475" class="label">POST /api/bot</text>
+  <text x="830" y="505" class="body">channel.js 统一分发客户端请求</text>
+  <text x="830" y="533" class="body">state / chat / groups / memory / tools</text>
+  <text x="830" y="559" class="small">ds-bot/src/host/channel.js</text>
+
+  <rect x="805" y="645" width="335" height="135" class="note" fill="#d9e7ff"/>
+  <text x="830" y="685" class="label">ds-bot client</text>
+  <text x="830" y="715" class="body">sidebar · chat · panels · dialogs</text>
+  <text x="830" y="743" class="body">src/client → client.js</text>
+  <text x="830" y="769" class="small">通过 Host 页面运行</text>
+
+  <rect x="1205" y="205" width="310" height="135" class="note" fill="#d6f0bc"/>
+  <text x="1230" y="245" class="label">Browser Plugins</text>
+  <text x="1230" y="275" class="body">refs · script · task</text>
+  <text x="1230" y="303" class="body">Playwright + 每个 Bot 的 profile</text>
+  <text x="1230" y="330" class="small">browser-plugins/</text>
+
+  <rect x="1205" y="410" width="310" height="160" class="note" fill="#c8e8f5"/>
+  <text x="1230" y="450" class="label">Local Voice</text>
+  <text x="1230" y="480" class="body">Host Manager + /api/local-voice</text>
+  <text x="1230" y="510" class="body">Python 子进程：ASR / TTS</text>
+  <text x="1230" y="540" class="small">local-voice/src/host/</text>
+
+  <rect x="1205" y="645" width="310" height="160" class="note" fill="#f4d6b6"/>
+  <text x="1230" y="685" class="label">持久化数据</text>
+  <text x="1230" y="715" class="body">bot/state.json：团队状态</text>
+  <text x="1230" y="743" class="body">DSH sessions：聊天会话</text>
+  <text x="1230" y="771" class="body">workspace：Bot 工作文件</text>
+
+  <path d="M195 315V380" class="arrow"/>
+  <path d="M195 525V600" class="arrow"/>
+  <path d="M320 255H430" class="arrow"/>
+  <path d="M575 340V410" class="arrow"/>
+  <path d="M720 487H805" class="arrow"/>
+  <path d="M972 365V435" class="arrow"/>
+  <path d="M972 570V645" class="arrow"/>
+  <path d="M1140 285H1205" class="dashed"/>
+  <path d="M1140 500H1205" class="dashed"/>
+  <path d="M1140 715H1205" class="dashed"/>
+  <path d="M575 565V645" class="dashed"/>
+
+  <rect x="70" y="850" width="1445" height="72" rx="14" fill="#2f3b45"/>
+  <text x="100" y="895" style="font:600 18px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#fff">核心心智模型：</text>
+  <text x="285" y="895" style="font:500 18px 'Segoe UI','Microsoft YaHei',sans-serif;fill:#e7eef3">Electron 负责“桌面体验” · DSH 负责“会话执行” · ds-bot 负责“团队业务” · 插件负责“能力扩展”</text>
+</svg>

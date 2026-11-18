@@ -464,13 +464,15 @@ export function MossLiveCaptionPanel({ controller, onOpenSettings, ui }) {
   const [followLatest, setFollowLatest] = useState(true)
   const [tab, setTab] = useState('captions')
   const [showHistory, setShowHistory] = useState(false)
+  const profile = live.boundProfile ?? {}
   const items = Array.isArray(live.transcript) ? live.transcript.filter(item => item?.text) : []
   const current = items.at(-1)
-  const historyItems = current ? items.slice(0, -1) : items
+  const savedItems = (profile.memory?.turns ?? []).filter(turn => turn.id !== live.recordId).flatMap(turn => turn.items).filter(item => item?.text)
+  const historyItems = [...savedItems, ...(current ? items.slice(0, -1) : items)]
   useEffect(() => {
     if (!followLatest || !history.current) return
     history.current.scrollTop = history.current.scrollHeight
-  }, [items.length, current?.text, followLatest])
+  }, [historyItems.length, current?.text, followLatest, showHistory, live.active])
   const onScroll = event => {
     const node = event.currentTarget
     const atLatest = node.scrollHeight - node.scrollTop - node.clientHeight < 24
@@ -478,9 +480,8 @@ export function MossLiveCaptionPanel({ controller, onOpenSettings, ui }) {
   }
   const ended = live.endedAt && !live.active && !live.busy
   const idle = Boolean(live.boundProfile && !live.active && !ended)
-  const profile = live.boundProfile ?? {}
   const memoryTurns = profile.memory?.turns?.length ?? 0
-  useEffect(() => { setShowHistory(false); setFollowLatest(true); setTab('captions') }, [live.profileId])
+  useEffect(() => { setShowHistory(false); setFollowLatest(true); setTab('captions') }, [live.profileId, live.recordId])
   const openSettings = () => { controller.requestSettings?.(live.boundBotId); onOpenSettings?.(live.boundBotId) }
   const dial = () => controller.start?.(live.profileId)
   const newContext = () => controller.start?.(live.profileId, { resume: false })
