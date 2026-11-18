@@ -70,7 +70,7 @@ Confirmed / migration in progress
 
 ## 6. 验收标准
 
-- 旧插件页 MOSS tab 不再出现；Bot 详情侧栏和实时字幕入口可用。
+- 旧插件页 MOSS tab 不再出现；旧 `MossLiveSettings` 全页配置、旧 DS Bot 接入 panel、旧场景/动画/屏幕共享 CSS 和对应页面测试已删除；Bot 详情侧栏和实时字幕入口可用。
 - 当前侧栏可以开始和停止屏幕共享，挂断和重拨不会错误恢复旧屏幕轨道。
 - 每一批上游能力有对应源代码、测试、构建和 lint 证据。
 - MOSS Profile、会话记忆、API Key、Host relay 和 Local Voice 不因迁移回归。
@@ -80,6 +80,7 @@ Confirmed / migration in progress
 
 - `[代码证据]` 已创建迁移分支 `codex/upstream-0.3.8-migration`。
 - `[代码证据]` 已移除旧 MOSS 插件 tab 注册和跳转 action。
+- `[代码证据]` 已删除旧 `MossLiveSettings` 全页配置、旧 DS Bot 接入 panel、旧场景/动画/屏幕共享 CSS 和页面专属测试。
 - `[代码证据]` 已把屏幕共享开始按钮补到当前实时字幕侧栏；相关专项测试通过。
 - `[待确认]` 上游 DSH 0.2.2-rc.1 升级是否与第一批体验能力一起进行，还是单独建立兼容性批次。
 
