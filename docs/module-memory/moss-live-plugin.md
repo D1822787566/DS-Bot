@@ -76,6 +76,8 @@
 - [用户确认] 2026-11-19 用户反馈「重新拨打后立即进入已挂断，且没有错误提示」。
 - [代码证据] 根因是 Host 返回的 `runtime.error` 在客户端被泛化为 `MOSS Live relay is not ready`，同时字幕侧栏没有渲染会话错误；现在保留 Provider 错误、将 HTTP 402/`insufficient_credits` 映射为明确的额度/计费提示，并在字幕侧栏以可见错误状态展示。当前账号本次失败是否确为额度不足，需以重拨后显示的具体错误为准；历史音色试听曾确认过 HTTP 402 `insufficient_credits`，不能替代本次实时连接的直接证据。
 - [代码证据] 新增重拨启动错误、HTTP 402 映射和字幕错误展示回归；MOSS 相关定向测试 119 项通过。正式 Desktop 已按 `start.ps1` 重启并加载新客户端。
+- [用户确认] 2026-11-19 用户变更 Profile 音色后收到 MOSS：`The voice reference must contain at least 5 seconds of speech. Choose another voice or use a longer recording.`
+- [代码证据] 当前音色列表只返回 `id/name/created_at`，未区分预置音色、可用于 Live 的音色和自定义参考音色；设置页因此允许选择列表中的所有音色。该错误指向所选音色的参考音频不足 5 秒或该音色不满足 Live 的参考音频要求，不等同于 API Key 或账户额度错误。后续可增加音色能力标记、保存前验证或中文提示。
 
 - [代码证据] 2026-11-18 已完整集成固定上游 0.3.8 与 DSH 0.2.2-rc.1；保留 MOSS Host/客户端、Profile 历史恢复、屏幕共享授权、详情与实时字幕，并与上游 Computer 页签共存。MOSS 相关测试纳入插件全量 3117 通过、7 跳过、0 失败；不代表真人通话和空播放标识异常已经验收。详见[迁移记录](upstream-migration.md)。
 
