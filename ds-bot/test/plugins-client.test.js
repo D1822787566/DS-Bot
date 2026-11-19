@@ -108,6 +108,16 @@ test('MOSS caption panel keeps both speakers visible and owns voice controls', a
   assert.equal(document.querySelector('[data-moss-caption-pair]'), null)
 })
 
+test('MOSS caption panel shows a provider failure after an immediate redial disconnect', async t => {
+  const controller = createSource({
+    visible: true, active: false, busy: false, sessionState: 'error', endedAt: new Date().toISOString(),
+    error: 'MOSS 账户可用积分不足（HTTP 402），请到 MOSS 控制台检查余额和可用额度。', transcript: [],
+  })
+  const document = await mount(t, MossLiveCaptionPanel, { controller })
+  assert.match(document.querySelector('[data-moss-caption-error]').textContent, /积分不足/)
+  assert.match(document.querySelector('[data-moss-caption-error]').textContent, /HTTP 402/)
+})
+
 test('MOSS caption panel keeps screen sharing start in the current sidebar', async t => {
   const calls = []
   const controller = createSource({ visible: true, active: true, busy: false, sessionState: 'ready', transcript: [], screenStream: null, screenBusy: false, screenError: '', endedAt: '' })

@@ -429,6 +429,7 @@ export function MossLiveCaptionPanel({ controller, onOpenSettings, ui }) {
         historyItems.map((item, index) => h('p', { key: `${item.id ?? item.kind}-${index}`, 'data-moss-caption-speaker': item.kind },
           h('small', null, item.kind === 'user' ? '你' : 'MOSS'), h('span', null, item.text))),
         !followLatest && items.length ? h('button', { type: 'button', className: 'bt-moss-caption-latest', onClick: () => { setFollowLatest(true); if (history.current) history.current.scrollTop = history.current.scrollHeight } }, '回到最新') : null)],
+    live.error ? h('div', { className: 'bt-moss-caption-error', 'data-moss-caption-error': true, role: 'alert' }, live.error) : null,
     live.memoryError ? h('div', { className: 'bt-moss-caption-memory-error', role: 'alert' }, live.memoryError,
       items.length ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => downloadMossTranscript(items, { personaName: profile.name }, live.startedAt, live.endedAt) }, '导出记录') : null) : null,
     h('footer', { className: 'bt-moss-caption-controls' },

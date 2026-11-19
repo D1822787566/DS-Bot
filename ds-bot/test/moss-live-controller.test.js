@@ -115,6 +115,32 @@ test('starting a remembered Profile can explicitly begin a new context', async (
   assert.deepEqual(startArgs, [{ profileId: 'profile-h', resume: false }])
 })
 
+test('a Host start error preserves the provider message instead of becoming a generic relay error', async () => {
+  const { controller, config } = fixture({ actions: {
+    mossLiveStart: async () => ({ config, runtime: {
+      state: 'error',
+      error: 'MOSS 账户可用积分不足（HTTP 402），请到 MOSS 控制台检查余额和可用额度。',
+    } }),
+  } })
+  await controller.start('profile-h')
+  const state = controller.getSnapshot()
+  assert.equal(state.active, false)
+  assert.equal(state.sessionState, 'error')
+  assert.match(state.error, /积分不足/)
+  assert.match(state.error, /HTTP 402/)
+  await controller.dispose()
+})
+
+test('a realtime HTTP 402 error is explained as a MOSS billing or credit failure', async () => {
+  const { controller, config } = fixture({ actions: {
+    mossLiveStart: async () => ({ config, runtime: { state: 'error', error: 'Unexpected server response: 402' } }),
+  } })
+  await controller.start('profile-h')
+  assert.match(controller.getSnapshot().error, /积分不足或计费校验未通过/)
+  assert.match(controller.getSnapshot().error, /HTTP 402/)
+  await controller.dispose()
+})
+
 test('final captions checkpoint memory before hangup and media stop does not wait for disk storage', async () => {
   const gate = pending(), memoryCalls = []
   const { controller, sessions } = fixture({ actions: { mossLiveMemorySave: value => { memoryCalls.push(value); return gate.promise } } })

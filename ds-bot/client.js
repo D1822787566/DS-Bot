@@ -33174,6 +33174,7 @@ function MossLiveCaptionPanel({ controller, onOpenSettings, ui: ui2 }) {
         } }, "回到最新") : null
       )
     ],
+    live.error ? (0, import_react39.createElement)("div", { className: "bt-moss-caption-error", "data-moss-caption-error": true, role: "alert" }, live.error) : null,
     live.memoryError ? (0, import_react39.createElement)(
       "div",
       { className: "bt-moss-caption-memory-error", role: "alert" },
@@ -45343,6 +45344,13 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
 }
 
 // src/client/moss-live-controller.js
+function mossLiveErrorMessage(error) {
+  const message = String(error?.message ?? error ?? "").trim();
+  if (/insufficient_credits|\b402\b/i.test(message)) {
+    return "MOSS 账户可用积分不足或计费校验未通过（HTTP 402），请到 MOSS 控制台检查余额和可用额度。";
+  }
+  return message || "MOSS Live 连接失败";
+}
 function createMossLiveController({ actions, createSession = (options) => new MossLiveSession(options), greet = speakMossGreeting } = {}) {
   const source = createSource({ visible: false, active: false, busy: false, sessionState: "idle", muted: false, level: 0, levelSource: "mic", transcript: [], screenStream: null, screenBusy: false, screenError: "", startedAt: "", endedAt: "", error: "", memoryError: "", message: "", profileId: "", boundBotId: "", boundProfile: null, recordId: "" });
   const patch = (update) => source.set((state) => ({ ...state, ...update }));
@@ -45419,6 +45427,7 @@ function createMossLiveController({ actions, createSession = (options) => new Mo
           await actions.mossLiveStop?.();
           return null;
         }
+        if (next?.runtime?.error && (!next.runtime.port || !next.runtime.token)) throw new Error(mossLiveErrorMessage(next.runtime.error));
         if (!next?.runtime?.port || !next?.runtime?.token) throw new Error("MOSS Live relay is not ready");
         const activeProfile = next.config?.profiles?.find((profile) => profile.id === (profileId || next.config?.selectedProfileId));
         const activeRecording = { id: globalThis.crypto.randomUUID(), resume };
@@ -45451,7 +45460,7 @@ function createMossLiveController({ actions, createSession = (options) => new Mo
             if (session === current2 && valid(id)) patch({ screenStream });
           },
           onEvent: (event) => {
-            if (session === current2 && valid(id) && event.type === "error") patch({ error: event.data?.error?.code === "invalid_public_request" ? "一条会话指令未被 MOSS 接受。" : event.data?.error?.message ?? "MOSS Live 返回错误" });
+            if (session === current2 && valid(id) && event.type === "error") patch({ error: event.data?.error?.code === "invalid_public_request" ? "一条会话指令未被 MOSS 接受。" : mossLiveErrorMessage(event.data?.error?.message ?? "MOSS Live 返回错误") });
           }
         });
         session = current2;
@@ -45478,7 +45487,7 @@ function createMossLiveController({ actions, createSession = (options) => new Mo
         session = null;
         cancelGreeting();
         await Promise.allSettled([failed?.stop(), actions.mossLiveStop?.()]);
-        if (valid(id)) patch({ active: false, sessionState: "error", level: 0, screenStream: null, endedAt: (/* @__PURE__ */ new Date()).toISOString(), error: failure.message });
+        if (valid(id)) patch({ active: false, sessionState: "error", level: 0, screenStream: null, endedAt: (/* @__PURE__ */ new Date()).toISOString(), error: mossLiveErrorMessage(failure) });
         return null;
       } finally {
         if (id === generation) patch({ busy: false });

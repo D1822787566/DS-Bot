@@ -1,6 +1,14 @@
 import { createSource } from './sources.js'
 import { MossLiveSession, mergeTranscriptEvent, speakMossGreeting } from './moss-live.js'
 
+export function mossLiveErrorMessage(error) {
+  const message = String(error?.message ?? error ?? '').trim()
+  if (/insufficient_credits|\b402\b/i.test(message)) {
+    return 'MOSS 账户可用积分不足或计费校验未通过（HTTP 402），请到 MOSS 控制台检查余额和可用额度。'
+  }
+  return message || 'MOSS Live 连接失败'
+}
+
 // One owner per client plugin instance. The Bot-page lifecycle ends its call;
 // mounting or unmounting a view alone does not own the microphone.
 export function createMossLiveController({ actions, createSession = options => new MossLiveSession(options), greet = speakMossGreeting } = {}) {
@@ -73,6 +81,7 @@ export function createMossLiveController({ actions, createSession = options => n
         if (!valid(id)) return null
         const next = await actions.mossLiveStart(profileId ? { profileId, resume } : { resume })
         if (!valid(id)) { await actions.mossLiveStop?.(); return null }
+        if (next?.runtime?.error && (!next.runtime.port || !next.runtime.token)) throw new Error(mossLiveErrorMessage(next.runtime.error))
         if (!next?.runtime?.port || !next?.runtime?.token) throw new Error('MOSS Live relay is not ready')
         const activeProfile = next.config?.profiles?.find(profile => profile.id === (profileId || next.config?.selectedProfileId))
         const activeRecording = { id: globalThis.crypto.randomUUID(), resume }
@@ -99,7 +108,7 @@ export function createMossLiveController({ actions, createSession = options => n
           },
           onScreenStream: screenStream => { if (session === current && valid(id)) patch({ screenStream }) },
           onEvent: event => {
-            if (session === current && valid(id) && event.type === 'error') patch({ error: event.data?.error?.code === 'invalid_public_request' ? '一条会话指令未被 MOSS 接受。' : event.data?.error?.message ?? 'MOSS Live 返回错误' })
+            if (session === current && valid(id) && event.type === 'error') patch({ error: event.data?.error?.code === 'invalid_public_request' ? '一条会话指令未被 MOSS 接受。' : mossLiveErrorMessage(event.data?.error?.message ?? 'MOSS Live 返回错误') })
           },
         })
         session = current
@@ -126,7 +135,7 @@ export function createMossLiveController({ actions, createSession = options => n
         session = null
         cancelGreeting()
         await Promise.allSettled([failed?.stop(), actions.mossLiveStop?.()])
-        if (valid(id)) patch({ active: false, sessionState: 'error', level: 0, screenStream: null, endedAt: new Date().toISOString(), error: failure.message })
+        if (valid(id)) patch({ active: false, sessionState: 'error', level: 0, screenStream: null, endedAt: new Date().toISOString(), error: mossLiveErrorMessage(failure) })
         return null
       } finally { if (id === generation) patch({ busy: false }) }
     })().finally(() => { starting = null })
