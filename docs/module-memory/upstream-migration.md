@@ -1,6 +1,6 @@
 # 上游 0.3.8 全量迁移
 
-记录状态：源码集成、自动化回归和正式 Desktop 启动核验完成；迁移分支交付
+记录状态：源码集成、自动化回归和正式 Desktop 启动核验完成；已合并并推送到主分支
 最近更新：2026-11-19
 
 ## 模块目标
@@ -42,4 +42,4 @@
 - [代码证据] 原生截图 `FrameArrived timed out`、点击 `coordinate input geometry is unavailable`，设置与插件页逐项原生视觉操作未验收；对应代码和自动化回归通过。
 - [代码证据] 启动前 Bot state 已备份至本机 `.ds-bot-local/diagnostics/runs/upstream-0.3.8-before-start/state.json`；本地数据与诊断记录不进入 Git。
 - [代码证据] 全量 Windows 验证：在 ds-bot 中用 `rg --files test -g '*.test.js'` 枚举，排除 `test/connectors-gateway.test.js`，其余传给 `node --import ./test/harness-resolve.mjs --test --test-concurrency=4 --test-timeout=120000 --test-force-exit`；gateway 用同一 import 单独运行且不加 force-exit。app/mobile/link/Local Voice 分别执行各自 npm test，mobile/link 再执行 npm run typecheck。
-- [代码证据] 交付分支为 origin/codex/upstream-0.3.8-migration；本轮不合并 main。后续从该分支和固定上游 SHA 继续，外部设备验收按开发文档逐项进行，MOSS 空播放标识异常继续从 MOSS 记录接续。
+- [代码证据] 2026-11-19 已将 `origin/codex/upstream-0.3.8-migration` 快进合并到 `main`，并推送 `origin/main`；`feat/plugin-presets` 已是迁移分支祖先，已随迁移一起进入主分支。后续从 `main` 和固定上游 SHA 继续，外部设备验收按开发文档逐项进行，MOSS 空播放标识异常继续从 MOSS 记录接续。
